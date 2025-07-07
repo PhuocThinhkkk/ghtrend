@@ -5,7 +5,8 @@ import (
 	"ghtrend/pkg/httpRequest"
 	"log"
 	"ghtrend/pkg/trending"
-	//"ghtrend/pkg/utils"
+	"ghtrend/pkg/utils"
+	"ghtrend/pkg/ui"
 )
 
 
@@ -22,5 +23,27 @@ func main(){
 		log.Fatal(err)
 	}
 	// utils.LogJson(repos)
+	// will cleaning this up later
+
+	var utilsRepos []utils.Repo
+	for _, r := range repos { // repos is []trending.Repo
+		utilsRepos = append(utilsRepos, utils.Repo{
+			Index:       r.Index,
+			Name:        r.Name,
+			Url:         r.Url,
+			Description: r.Description,
+			Language:    r.Language,
+			Stars:       r.Stars,
+			Forks:       r.Forks,
+		})
+	}
+
 		
+	program, err := ui.Render(utilsRepos)
+	if err != nil {
+		log.Fatal("err when render: ", err)
+	}
+
+	_ = program
+	
 }
