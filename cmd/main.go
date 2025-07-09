@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"ghtrend/pkg/httpRequest"
 	"log"
 	"ghtrend/pkg/trending"
@@ -11,7 +10,6 @@ import (
 
 
 func main(){
-	fmt.Println("hi mom")
 	res, err := httpRequest.Fetch()
 	if err != nil{
 		log.Fatal(err)
@@ -22,24 +20,9 @@ func main(){
 	if err != nil {
 		log.Fatal(err)
 	}
-	// utils.LogJson(repos)
-	// will cleaning this up later
-
-	var utilsRepos []utils.Repo
-	for _, r := range repos { // repos is []trending.Repo
-		utilsRepos = append(utilsRepos, utils.Repo{
-			Index:       r.Index,
-			Name:        r.Name,
-			Url:         r.Url,
-			Description: r.Description,
-			Language:    r.Language,
-			Stars:       r.Stars,
-			Forks:       r.Forks,
-		})
-	}
-
+	utils.LogJson(repos)
 		
-	program, err := ui.Render(utilsRepos)
+	program, err := ui.Render(repos)
 	if err != nil {
 		log.Fatal("err when render: ", err)
 	}
