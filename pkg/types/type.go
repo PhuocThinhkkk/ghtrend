@@ -9,4 +9,5 @@ type Repo struct {
     Language    string `json:"language"`
     Stars       string `json:"stars"`
     Forks       string `json:"forks"`
+	ReadMe      string `json:"readme"` 
 }
