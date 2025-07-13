@@ -2,6 +2,7 @@ package main
 
 import (
 	"ghtrend/pkg/httpRequest"
+	"fmt"
 	"log"
 	"ghtrend/pkg/trending"
 	"ghtrend/pkg/utils"
@@ -10,7 +11,7 @@ import (
 
 
 func main(){
-	res, err := httpRequest.Fetch()
+	res, err := httpRequest.Fetch("https://github.com/trending")
 	if err != nil{
 		log.Fatal(err)
 	}
@@ -22,6 +23,12 @@ func main(){
 	}
 	utils.LogJson(repos)
 		
+	hi, err := httpRequest.GetRawGithubReadmeFile("snap-stanford", "Biomni")
+	if err != nil {
+		fmt.Println("haldsf")
+	}
+	fmt.Println (hi)
+	
 	program, err := ui.Render(repos)
 	if err != nil {
 		log.Fatal("err when render: ", err)
