@@ -2,7 +2,6 @@ package main
 
 import (
 	"ghtrend/pkg/httpRequest"
-    "fmt"
 	"log"
 	"ghtrend/pkg/ui"
 )
@@ -14,7 +13,6 @@ func main(){
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(repos[0].ReadMe)
 	program, err := ui.Render(repos)
 	if err != nil {
 		log.Fatal("err when render: ", err)
