@@ -5,15 +5,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
+
+	"github.com/charmbracelet/glamour"
 )
 
 var debugMode = true
 
 var baseStyle = lipgloss.NewStyle().
-	BorderStyle(lipgloss.NormalBorder()).
-	BorderForeground(lipgloss.Color("240"))
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("#7D56F4")).
+	Height(20)
 
+// TODO: clean this later
+var (
+		borderStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#7D56F4")).
+		Padding(1, 2).
+		Width(70).
+		Height(30)
 
+		headerStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#5CE1E6")).
+		Bold(true)
+	)
 type Model struct {
    	table table.Model
 }
@@ -36,7 +51,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 func (m Model) View() string {
-	return baseStyle.Render(m.table.View())
+	left := baseStyle.Render(m.table.View())
+
+	header := headerStyle.Render("/home/thinh_dz/projects/go/ghtrend/pkg/httpRequest")
+
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(), // Use "dark", "light", or "notty"
+	)
+
+	body, err := renderer.Render(string("#hi man \n i am a guy with a stupiz dog."))
+	if err != nil {
+		panic(err)
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, header, body)
+	right := borderStyle.Render(content)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 }
 
@@ -65,7 +96,7 @@ func Render(repos []types.Repo) (tea.Model, error) {
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(true),
-		table.WithHeight(15),
+		table.WithHeight(20),
 	)
 
 	s := table.DefaultStyles()
