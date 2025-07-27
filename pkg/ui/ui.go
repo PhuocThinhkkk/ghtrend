@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"io"
 	"errors"
+	"ghtrend/pkg/utils"
 	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
 	"strings"
@@ -70,8 +71,10 @@ func (m Model) View() string {
 	if len(strings.TrimSpace(markdown)) == 0 {
 		markdown = "_No README found._"
 	} else if len(markdown) > 800 {
+		markdown = utils.CleanMarkdown(markdown)
 		markdown = markdown[:800] + "\n..."
 	}
+	
 
 	body, err := renderer.Render(markdown)
 	if err != nil && !errors.Is(err, io.EOF) {
