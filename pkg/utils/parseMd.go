@@ -7,64 +7,55 @@ import (
 func CleanMarkdown(input string) string {
     clean := input
 
-    // Remove ANSI escapes (optional)
-    ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-    clean = ansi.ReplaceAllString(clean, "")
+    // Remove ANSI escape codes
+    reANSI := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+    clean = reANSI.ReplaceAllString(clean, "")
 
-    // Remove images
-    img := regexp.MustCompile(`!\[.*?\]\(.*?\)`)
-    clean = img.ReplaceAllString(clean, "")
+    // Remove images (inline and linked)
+    reImages := regexp.MustCompile(`\[!\[.*?\]\(.*?\)\]\(.*?\)|!\[.*?\]\(.*?\)`)
+    clean = reImages.ReplaceAllString(clean, "")
 
-    // Replace links [text](url) with [text]
-    link := regexp.MustCompile(`\[(.*?)\]\(.*?\)`)
-    clean = link.ReplaceAllString(clean, "[$1]")
+    // Remove HTML tags (including <img>, <a>)
+    reHTML := regexp.MustCompile(`(?s)<[^>]+>`)
+    clean = reHTML.ReplaceAllString(clean, "")
 
-    // Remove footnote definitions and references
-    refDef := regexp.MustCompile(`(?m)^\s*\[\d+\]:\s+.*$`)
-    clean = refDef.ReplaceAllString(clean, "")
-    refUse := regexp.MustCompile(`\[(.*?)\]\[\d+\]`)
-    clean = refUse.ReplaceAllString(clean, "[$1]")
+    // Remove markdown links but keep link text
+    reLinks := regexp.MustCompile(`\[(.*?)\]\(.*?\)`)
+    clean = reLinks.ReplaceAllString(clean, "$1")
 
-    // Remove HTML tags
-    html := regexp.MustCompile(`(?s)<[^>]+>`)
-    clean = html.ReplaceAllString(clean, "")
-
-    // Remove any line containing two or more pipes
-    anyTable := regexp.MustCompile(`(?m)^.*\|.+\|.*$`)
-    clean = anyTable.ReplaceAllString(clean, "")
-
-    // Remove leading or trailing pipes on any line
-    leadPipe := regexp.MustCompile(`(?m)^\s*\|\s*`)
-    clean = leadPipe.ReplaceAllString(clean, "")
-    trailPipe := regexp.MustCompile(`(?m)\s*\|\s*$`)
-    clean = trailPipe.ReplaceAllString(clean, "")
+    // Remove tables (lines with pipes)
+    reTables := regexp.MustCompile(`(?m)^.*\|.*\|.*$`)
+    clean = reTables.ReplaceAllString(clean, "")
 
     // Remove fenced code blocks ```
-    fences := regexp.MustCompile("(?s)```.*?```")
-    clean = fences.ReplaceAllString(clean, "")
+    reFencedCode := regexp.MustCompile("(?s)```.*?```")
+    clean = reFencedCode.ReplaceAllString(clean, "")
 
     // Remove inline code `code`
-    inlineCode := regexp.MustCompile("`[^`]+`")
-    clean = inlineCode.ReplaceAllString(clean, "")
+    reInlineCode := regexp.MustCompile("`[^`]+`")
+    clean = reInlineCode.ReplaceAllString(clean, "")
 
     // Remove blockquotes
-    bq := regexp.MustCompile(`(?m)^\s*>.*$`)
-    clean = bq.ReplaceAllString(clean, "")
+    reBlockquote := regexp.MustCompile(`(?m)^\s*>.*$`)
+    clean = reBlockquote.ReplaceAllString(clean, "")
 
     // Remove horizontal rules like --- or ***
-    hr := regexp.MustCompile(`(?m)^\s*([-*_]){3,}\s*$`)
-    clean = hr.ReplaceAllString(clean, "")
+    reHR := regexp.MustCompile(`(?m)^\s*([-*_]){3,}\s*$`)
+    clean = reHR.ReplaceAllString(clean, "")
 
-    // Remove bold and italics markers *, **, _, __
-    em := regexp.MustCompile(`(\*\*|__|\*|_)`)
-    clean = em.ReplaceAllString(clean, "")
+    // Remove emphasis markers
+    reEmphasis := regexp.MustCompile(`(\*\*|__|\*|_)`)
+    clean = reEmphasis.ReplaceAllString(clean, "")
+
+    // Remove footnotes definitions and references
+    reFootnoteDef := regexp.MustCompile(`(?m)^\s*\[\d+\]:\s+.*$`)
+    clean = reFootnoteDef.ReplaceAllString(clean, "")
+    reFootnoteRef := regexp.MustCompile(`\[\d+\]`)
+    clean = reFootnoteRef.ReplaceAllString(clean, "")
 
     // Collapse multiple blank lines to max two
-    clean = regexp.MustCompile(`\n{3,}`).ReplaceAllString(clean, "\n\n")
-    clean = strings.TrimSpace(clean)
-
-	re := regexp.MustCompile(` {10,}`)
-	clean =  re.ReplaceAllString(clean, " ")
+    reMultiNewline := regexp.MustCompile(`\n{3,}`)
+    clean = reMultiNewline.ReplaceAllString(clean, "\n\n")
 
 	clean = normalizeNewlines(clean)
     return clean
