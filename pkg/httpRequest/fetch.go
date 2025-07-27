@@ -2,7 +2,6 @@ package httpRequest
 
 import (
 	"io"
-	"ghtrend/pkg/utils"
 	"sync"
 	"net/http"
 	"fmt"
@@ -59,7 +58,6 @@ func ParseHtml(html string) (RepoList, error) {
 			ReadMe:     "",
 		})
 	})
-	utils.LogJson(repos)	
 	return repos, nil
 }
 
