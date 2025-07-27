@@ -31,7 +31,9 @@ var (
 		headerStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#5CE1E6")).
 		Bold(true)
+
 	)
+
 type Model struct {
    	table table.Model
 	repoList []types.Repo
@@ -63,16 +65,27 @@ func (m Model) View() string {
 
 	renderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(50),
+		glamour.WithWordWrap(60),
 		glamour.WithPreservedNewLines(),
 	)
 
 	markdown := m.repoList[cursor].ReadMe
 	if len(strings.TrimSpace(markdown)) == 0 {
 		markdown = "_No README found._"
-	} else if len(markdown) > 800 {
+	} else {
 		markdown = utils.CleanMarkdown(markdown)
-		markdown = markdown[:800] + "\n..."
+
+		maxLines := 22
+		lines := strings.Split(markdown, "\n")
+		inx := 0
+		countLine := 0
+		for countLine <= maxLines {
+			countLine += len(lines[inx])/60 + 1
+			inx++
+		}
+		lines = append(lines[:(inx - 1)], "...") // add ellipsis
+		markdown = strings.Join(lines, "\n")
+
 	}
 	
 
