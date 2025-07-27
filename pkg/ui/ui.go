@@ -3,9 +3,11 @@ package ui
 import (
     tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"io"
+	"errors"
 	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
-
+	"strings"
 	"github.com/charmbracelet/glamour"
 )
 
@@ -31,6 +33,8 @@ var (
 	)
 type Model struct {
    	table table.Model
+	repoList []types.Repo
+	
 }
 
 func (m Model) Init() tea.Cmd {
@@ -50,17 +54,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     m.table, cmd = m.table.Update(msg)		
 	return m, cmd
 }
+
 func (m Model) View() string {
 	left := baseStyle.Render(m.table.View())
-
-	header := headerStyle.Render("/home/thinh_dz/projects/go/ghtrend/pkg/httpRequest")
+	cursor := m.table.Cursor()
+	header := headerStyle.Render("Readme Preview: ")
 
 	renderer, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(), // Use "dark", "light", or "notty"
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(50),
+		glamour.WithPreservedNewLines(),
 	)
 
-	body, err := renderer.Render(string("#hi man \n i am a guy with a stupiz dog."))
-	if err != nil {
+	markdown := m.repoList[cursor].ReadMe
+	if len(strings.TrimSpace(markdown)) == 0 {
+		markdown = "_No README found._"
+	} else if len(markdown) > 800 {
+		markdown = markdown[:800] + "\n..."
+	}
+
+	body, err := renderer.Render(markdown)
+	if err != nil && !errors.Is(err, io.EOF) {
 		panic(err)
 	}
 
@@ -68,7 +82,6 @@ func (m Model) View() string {
 	right := borderStyle.Render(content)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-
 }
 
 func Render(repos []types.Repo) (tea.Model, error) {
@@ -114,8 +127,10 @@ func Render(repos []types.Repo) (tea.Model, error) {
 	Bold(true)
 	t.SetStyles(s)
 
-	m := Model{t}
-    p := tea.NewProgram(m)
+	m := Model{
+		table: t,
+		repoList: repos,
+	}
+	p := tea.NewProgram(m)
     return p.Run()
 }
-
