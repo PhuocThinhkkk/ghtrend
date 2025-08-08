@@ -13,17 +13,20 @@ var (
 	borderStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
 	BorderForeground(lipgloss.Color("#7D56F4")).
-	Padding(2, 2).
-	Width(70).
+	Padding(0, 2).
+	Width(90).
 	Height(32)
 
 	headerStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#5CE1E6")).
-	Bold(true)
+	Foreground(lipgloss.Color("#A5FFD6")).
+	Italic(true).
+	Underline(true).
+	MarginLeft(1).
+	MarginBottom(1)
 
 	renderer, _ = glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(60),
+		glamour.WithWordWrap(80),
 		glamour.WithPreservedNewLines(),
 	)
 )
@@ -44,7 +47,7 @@ func RenderReadme(markdown string) (string, error) {
 			if(len(lines) <= inx ) {
 				break
 			}
-			countLine += len(lines[inx])/60 + 1
+			countLine += len(lines[inx])/90 + 1
 			inx++
 		}
 		lines = append(lines[:(inx - 1)], "...") 

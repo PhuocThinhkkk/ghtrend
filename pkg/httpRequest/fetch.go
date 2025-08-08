@@ -1,6 +1,7 @@
 package httpRequest
 
 import (
+	"log"
 	"io"
 	"sync"
 	"net/http"
@@ -26,7 +27,7 @@ func Fetch(url string) ([]byte, error) {
 	return body, nil
 }
 
-func ParseHtml(html string) (RepoList, error) {
+func getReposInfo(html string) (RepoList, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		fmt.Println("error when parsing html")
@@ -36,9 +37,9 @@ func ParseHtml(html string) (RepoList, error) {
 	doc.Find("article.Box-row").Each(func(i int, s *goquery.Selection) {
 		name := strings.TrimSpace(s.Find("h2 a").Text())
 		owner, repoName := "", ""
-		if parts := strings.Split(name, "/\n\n      "); len(parts) == 2 {
-			repoName = parts[1]
-			owner = parts[0]
+		if parts := strings.Split(name,"/\n\n"); len(parts) == 2 {
+			repoName = strings.ReplaceAll(parts[1], " ", "")
+			owner = strings.ReplaceAll(parts[0], " ", "")
 		}
 		url, _ := s.Find("h2 a").Attr("href")
 		description := strings.TrimSpace(s.Find("p").Text())
@@ -62,7 +63,7 @@ func ParseHtml(html string) (RepoList, error) {
 }
 
 // https://raw.githubusercontent.com/charmbracelet/glow/master/README.md
-func GetRawGithubReadmeFile( owner string, repoName string ) ( string , error ) {
+func getRawGithubReadmeFile( owner string, repoName string ) ( string , error ) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
 	readmeText, err := Fetch(url)
 	if err == nil {
@@ -77,18 +78,56 @@ func GetRawGithubReadmeFile( owner string, repoName string ) ( string , error ) 
 	return string(readmeText2), nil
 }
 
+func getRepoHtml( owner string, repoName string ) ( string , error ) {
+	url := "https://github.com/" + owner + "/" + repoName 
+	repoPage, err := Fetch(url)
+	if err != nil {
+		return "", err
+	}
+	return string(repoPage), nil
+}
 
-func (repos RepoList) appendReadmeToAllRepo() error {
+func getRootInfor(html  string) ( []types.EntryInfor, error ){
+	var entries []types.EntryInfor
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		e := fmt.Errorf("Failed to parse HTML when taking root infor: %v", err)
+		return entries, e
+	}
+
+	doc.Find("div[role='row']").Each(func(i int, s *goquery.Selection) {
+		log.Println("got em")
+		icon, _ := s.Find("svg").Attr("aria-label")
+		name := strings.TrimSpace(s.Find("a[data-testid='tree-item-file-name']").Text())
+
+		if name == "" || (icon != "Directory" && icon != "File") {
+			return
+		}
+
+		entry := types.EntryInfor{
+			Name: name,
+			Type: strings.ToLower(icon), 
+		}
+		entries = append(entries, entry)
+
+	})
+
+	return entries, nil
+}
+
+
+func (repos RepoList) getFullInfor() error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(repos))
 	
 	for i := range repos {
 		repo := &repos[i]
-		wg.Add(1)
+		wg.Add(2)
+
 		go func(repo *types.Repo) {
 
 			defer wg.Done()
-			readme, err := GetRawGithubReadmeFile( repo.Owner, repo.Name)
+			readme, err := getRawGithubReadmeFile( repo.Owner, repo.Name)
 			if err != nil {
 				repo.ReadMe = ""
 				errChan <- err
@@ -96,8 +135,24 @@ func (repos RepoList) appendReadmeToAllRepo() error {
 
 			repo.ReadMe = readme
 		}(repo)
-	}
 
+		go func(repo *types.Repo) {
+
+			defer wg.Done()
+			repoPage, err := getRepoHtml( repo.Owner, repo.Name)
+			if err != nil {
+				repo.ReadMe = ""
+				errChan <- err
+			}
+			rootInfo, err := getRootInfor(repoPage)
+			if err != nil {
+				repo.RootInfor = []types.EntryInfor{}
+				errChan <- err
+			}
+
+			repo.RootInfor = rootInfo
+		}(repo)
+	}
 	wg.Wait()
 	close(errChan)
 	if len(errChan) > 0 {
@@ -115,12 +170,12 @@ func GetAllTrendingRepos() (RepoList, error ) {
 	}
 	html := string(res)
 
-	repos , err := ParseHtml(html)
+	repos , err := getReposInfo(html)
 	if err != nil {
 		return nil, err
 	}
 		
-	err = repos.appendReadmeToAllRepo()
+	err = repos.getFullInfor()
 	if err != nil {
 		return nil, err
 	}
