@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/viewport"
 )
 
 var debugMode = true
@@ -13,6 +14,7 @@ var debugMode = true
 type Model struct {
    	table table.Model
 	repoList []types.Repo
+	viewport  viewport.Model
 }
 
 func (m Model) Init() tea.Cmd {
@@ -28,7 +30,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
             return m, tea.Quit
       
         }
-    }
+	case tea.WindowSizeMsg:
+		m.viewport.Width = msg.Width
+		m.viewport.Height = msg.Height
+	}
     m.table, cmd = m.table.Update(msg)		
 	return m, cmd
 }
@@ -40,7 +45,13 @@ func (m Model) View() string {
 		log.Fatal("Error when render readme markdown: ", err)
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, table, readMe)
+	view := lipgloss.JoinHorizontal(lipgloss.Top, table, readMe)
+	content := lipgloss.NewStyle().
+		Width(m.viewport.Width).
+		Height(m.viewport.Height).
+		Render(view)
+
+	return content
 }
 
 func Render(repos []types.Repo) (tea.Model, error) {

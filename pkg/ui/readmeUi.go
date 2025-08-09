@@ -10,12 +10,16 @@ import (
 )
 
 var (
-	borderStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("#7D56F4")).
+
+	contentStyle = lipgloss.NewStyle().
 	Padding(0, 2).
 	Width(90).
-	Height(32)
+	MaxHeight(32)
+
+	// Define your outer border style
+	borderStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("#7D56F4"))
 
 	headerStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#A5FFD6")).
@@ -62,6 +66,7 @@ func RenderReadme(markdown string) (string, error) {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body)
-	right := borderStyle.Render(content)
-	return right, nil;
+	right := contentStyle.Render(content)
+	out := borderStyle.Render(right)
+	return out, nil
 }
