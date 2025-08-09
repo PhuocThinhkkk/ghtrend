@@ -1,7 +1,9 @@
-package httpRequest
+package ghclient
 
 import (
 	"log"
+	"os"
+	"path/filepath"
 	"io"
 	"sync"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"github.com/PuerkitoBio/goquery"
 	"ghtrend/pkg/types"
+	"ghtrend/pkg/cache"
 )
 type RepoList []types.Repo
 
@@ -156,7 +159,7 @@ func (repos RepoList) getFullInfor() error {
 	wg.Wait()
 	close(errChan)
 	if len(errChan) > 0 {
-		return <-errChan // return the first error (or aggregate if needed)
+		return <-errChan 
 	}
 	return nil
 }
@@ -164,6 +167,18 @@ func (repos RepoList) getFullInfor() error {
 
 
 func GetAllTrendingRepos() (RepoList, error ) {
+
+	cacheDir, _ := os.UserCacheDir()
+	ghtrendDir := filepath.Join(cacheDir, "ghtrend")
+	cachePath := filepath.Join(ghtrendDir, "cachedata.json")
+
+	cacheRepos, err := cache.LoadCache(cachePath)
+	if err == nil {
+		return cacheRepos, nil
+	}
+
+	log.Println("err when getting cache : ", err )
+
 	res, err := Fetch("https://github.com/trending")
 	if err != nil{
 		return nil, err
@@ -179,6 +194,12 @@ func GetAllTrendingRepos() (RepoList, error ) {
 	if err != nil {
 		return nil, err
 	}
+	
+	err = cache.SaveCache(repos, cachePath)
+	if err != nil {
+		return nil, err
+	}
+
 	return repos, nil
 }
 
