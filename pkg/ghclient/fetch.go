@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"encoding/json"
 	"io"
 	"sync"
 	"net/http"
@@ -14,6 +15,24 @@ import (
 	"ghtrend/pkg/cache"
 )
 type RepoList []types.Repo
+
+type GitHubContent struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	SHA         string `json:"sha"`
+	Size        int    `json:"size"`
+	URL         string `json:"url"`
+	HTMLURL     string `json:"html_url"`
+	GitURL      string `json:"git_url"`
+	DownloadURL *string `json:"download_url"` 
+	Type        string `json:"type"`
+	Links       struct {
+		Self string `json:"self"`
+		Git  string `json:"git"`
+		HTML string `json:"html"`
+	} `json:"_links"`
+}
+
 
 func Fetch(url string) ([]byte, error) {
 	res, err := http.Get(url)
@@ -81,39 +100,27 @@ func getRawGithubReadmeFile( owner string, repoName string ) ( string , error ) 
 	return string(readmeText2), nil
 }
 
-func getRepoHtml( owner string, repoName string ) ( string , error ) {
-	url := "https://github.com/" + owner + "/" + repoName 
-	repoPage, err := Fetch(url)
-	if err != nil {
-		return "", err
-	}
-	return string(repoPage), nil
-}
 
-func getRootInfor(html  string) ( []types.EntryInfor, error ){
+// https://api.github.com/repos/vercel/next.js/contents
+func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 	var entries []types.EntryInfor
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	url := "https://api.github.com/repos/" + owner + "/" + name + "/contents"
+	res, err := Fetch(url)
 	if err != nil {
-		e := fmt.Errorf("Failed to parse HTML when taking root infor: %v", err)
-		return entries, e
+		return []types.EntryInfor{}, err
+	}
+	var contents []GitHubContent
+	err = json.Unmarshal(res, &contents)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	doc.Find("div[role='row']").Each(func(i int, s *goquery.Selection) {
-		log.Println("got em")
-		icon, _ := s.Find("svg").Attr("aria-label")
-		name := strings.TrimSpace(s.Find("a[data-testid='tree-item-file-name']").Text())
-
-		if name == "" || (icon != "Directory" && icon != "File") {
-			return
-		}
-
-		entry := types.EntryInfor{
-			Name: name,
-			Type: strings.ToLower(icon), 
-		}
-		entries = append(entries, entry)
-
-	})
+	for _, c := range contents {
+		entries = append(entries, types.EntryInfor {
+			Name : c.Name,
+			Type: c.Type,
+		})
+	}
 
 	return entries, nil
 }
@@ -142,12 +149,7 @@ func (repos RepoList) getFullInfor() error {
 		go func(repo *types.Repo) {
 
 			defer wg.Done()
-			repoPage, err := getRepoHtml( repo.Owner, repo.Name)
-			if err != nil {
-				repo.ReadMe = ""
-				errChan <- err
-			}
-			rootInfo, err := getRootInfor(repoPage)
+			rootInfo, err := getRootInfor(repo.Owner, repo.Name)
 			if err != nil {
 				repo.RootInfor = []types.EntryInfor{}
 				errChan <- err
