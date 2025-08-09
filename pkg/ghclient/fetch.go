@@ -179,8 +179,6 @@ func GetAllTrendingRepos() (RepoList, error ) {
 		return cacheRepos, nil
 	}
 
-	log.Println("err when getting cache : ", err )
-
 	res, err := Fetch("https://github.com/trending")
 	if err != nil{
 		return nil, err
