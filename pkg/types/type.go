@@ -20,3 +20,9 @@ type EntryInfor struct {
 	Type   string  `json:"type"`
 }
 
+
+
+type CacheData struct {
+	Timestamp int64 `json:"timestamp"`
+	Data     []Repo      `json:"data"`
+}

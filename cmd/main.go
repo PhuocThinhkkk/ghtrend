@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ghtrend/pkg/httpRequest"
+	"ghtrend/pkg/ghclient"
 	"ghtrend/pkg/utils"
 	"log"
 	"ghtrend/pkg/ui"
@@ -10,7 +10,7 @@ import (
 
 func main(){
 	
-	repos, err := httpRequest.GetAllTrendingRepos()
+	repos, err := ghclient.GetAllTrendingRepos()
 	if err != nil {
 		log.Fatal(err)
 	}
