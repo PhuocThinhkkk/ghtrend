@@ -7,14 +7,21 @@ import (
 	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbles/list"
 )
 
 var debugMode = true
 
+type activeComponent int8
+const tableActive = 0
+const listActive  = 1
+
 type Model struct {
    	table table.Model
+	list  list.Model
 	repoList []types.Repo
 	viewport  viewport.Model
+	active    activeComponent
 }
 
 func (m Model) Init() tea.Cmd {
@@ -59,6 +66,7 @@ func Render(repos []types.Repo) (tea.Model, error) {
 	m := Model{
 		table: table,
 		repoList: repos,
+		active: tableActive,
 	}
 	p := tea.NewProgram(m)
     return p.Run()

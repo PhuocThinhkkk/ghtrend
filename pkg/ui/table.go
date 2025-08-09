@@ -49,15 +49,15 @@ func InitialTable(repos []types.Repo) table.Model{
 	s := table.DefaultStyles()
 	s.Header = s.Header.
 	BorderStyle(lipgloss.NormalBorder()).
-	BorderForeground(lipgloss.Color("60")).     // muted purple border
-	Foreground(lipgloss.Color("183")).          // soft lavender text
-	Background(lipgloss.Color("54")).           // dark purple background
+	BorderForeground(lipgloss.Color("60")).
+	Foreground(lipgloss.Color("183")).    
+	Background(lipgloss.Color("54")).    
 	BorderBottom(true).
 	Bold(true)
 
 	s.Selected = s.Selected.
-	Foreground(lipgloss.Color("16")).           // near-black text
-	Background(lipgloss.Color("99")).           // hot pink-purple highlight
+	Foreground(lipgloss.Color("16")).   
+	Background(lipgloss.Color("99")).  
 	Bold(true)
 
 	t.SetStyles(s)
