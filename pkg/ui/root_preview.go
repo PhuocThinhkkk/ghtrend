@@ -21,6 +21,22 @@ func (i item) Title() string       { return i.name }
 func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return i.name }
 
+func (m *Model) setFileList() {
+	items := []list.Item{}
+	
+	tableCursor := m.table.Cursor()
+	dirs := m.repoList[tableCursor].RootInfor
+
+	for i := 0; i <= len(dirs) - 1 ; i++ {
+		newItem := item {
+			name: dirs[i].Name,
+		}
+		items = append(items, newItem)
+
+	}
+	 m.list.SetItems(items)
+}
+
 func RenderFileList(m list.Model) string {
 	return docStyle.Render(m.View())
 }

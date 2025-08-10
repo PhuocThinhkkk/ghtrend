@@ -47,6 +47,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	table := RenderTable(m.table)
+	m.setFileList()
 	fileList := RenderFileList(m.list)
 
 	left := lipgloss.JoinVertical(lipgloss.Left, table, fileList)
