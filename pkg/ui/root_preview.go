@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var docStyle = lipgloss.NewStyle().Margin(1, 2)
+var docStyle = lipgloss.NewStyle().Margin(1, 2).Height(20).Border(lipgloss.Border{})
 
 type item struct {
 	name string
@@ -21,7 +21,7 @@ func RenderFileList(m list.Model) string {
 	return docStyle.Render(m.View())
 }
 
-func SetFileList(dirs []types.EntryInfor) list.Model{
+func InitialFileList(dirs []types.EntryInfor) list.Model{
 	items := []list.Item{}
 
 	for i := 0; i <= len(dirs) - 1 ; i++ {
@@ -32,7 +32,7 @@ func SetFileList(dirs []types.EntryInfor) list.Model{
 
 	}
 
-	m :=  list.New(items, list.NewDefaultDelegate(), 0, 0)
+	m :=  list.New(items, list.NewDefaultDelegate(), 20, 30)
 	m.Title = "My Fave Things"
 	return m
 }
