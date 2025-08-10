@@ -35,13 +35,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         switch msg.String() {
         case "q", "ctrl+c":
             return m, tea.Quit
+		case "tab":
+			if m.active == tableActive {
+				m.active = listActive
+			} else if  m.active == listActive {
+				m.active = tableActive
+			}
       
         }
 	case tea.WindowSizeMsg:
 		m.viewport.Width = msg.Width
 		m.viewport.Height = msg.Height
 	}
-    m.table, cmd = m.table.Update(msg)		
+	if m.active == tableActive {
+		m.table, cmd = m.table.Update(msg)		
+	}
+	if m.active == listActive {
+		m.list, cmd = m.list.Update(msg)		
+	}
 	return m, cmd
 }
 
