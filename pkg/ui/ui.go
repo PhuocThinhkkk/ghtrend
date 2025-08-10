@@ -47,12 +47,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	table := RenderTable(m.table)
+	fileList := RenderFileList(m.list)
+
+	left := lipgloss.JoinVertical(lipgloss.Left, table, fileList)
 	readMe, err:= RenderReadme(m.repoList[m.table.Cursor()].ReadMe)
 	if err != nil {
 		log.Fatal("Error when render readme markdown: ", err)
 	}
 
-	view := lipgloss.JoinHorizontal(lipgloss.Top, table, readMe)
+	view := lipgloss.JoinHorizontal(lipgloss.Top, left, readMe)
 	content := lipgloss.NewStyle().
 		Width(m.viewport.Width).
 		Height(m.viewport.Height).
@@ -63,8 +66,10 @@ func (m Model) View() string {
 
 func Render(repos []types.Repo) (tea.Model, error) {
 	table := InitialTable(repos)
+	list := InitialFileList(repos[0].RootInfor)
 	m := Model{
 		table: table,
+		list :  list,
 		repoList: repos,
 		active: tableActive,
 	}

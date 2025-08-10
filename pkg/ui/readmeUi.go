@@ -14,7 +14,8 @@ var (
 	contentStyle = lipgloss.NewStyle().
 	Padding(0, 2).
 	Width(90).
-	MaxHeight(32)
+	MaxHeight(32).
+	Height(32)
 
 	// Define your outer border style
 	borderStyle = lipgloss.NewStyle().
