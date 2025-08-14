@@ -1,6 +1,7 @@
 package ghclient
 
 import (
+	"sort"
 	"log"
 	"os"
 	"path/filepath"
@@ -121,6 +122,26 @@ func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 			Type: c.Type,
 		})
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		priority := func(e types.EntryInfor) int {
+			if e.Type == "dir" && strings.HasPrefix(e.Name, ".") {
+				return 0 
+			}
+			if e.Type == "dir" {
+				return 1 
+			}
+			return 2 
+		}
+
+		pi := priority(entries[i])
+		pj := priority(entries[j])
+
+		if pi != pj {
+			return pi < pj 
+		}
+
+		return entries[i].Name < entries[j].Name
+	})
 
 	return entries, nil
 }
