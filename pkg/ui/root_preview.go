@@ -28,8 +28,15 @@ func (m *Model) setFileList() {
 	dirs := m.repoList[tableCursor].RootInfor
 
 	for i := 0; i <= len(dirs) - 1 ; i++ {
-		newItem := item {
-			name: dirs[i].Name,
+		var newItem item
+		if dirs[i].Type == "dir" {
+			newItem = item {
+				name: "📁 " + dirs[i].Name,
+			}
+		}else {
+			newItem = item {
+				name: dirs[i].Name,
+			}
 		}
 		items = append(items, newItem)
 
@@ -45,9 +52,17 @@ func InitialFileList(dirs []types.EntryInfor) list.Model{
 	items := []list.Item{}
 
 	for i := 0; i <= len(dirs) - 1 ; i++ {
-		newItem := item {
-			name: dirs[i].Name,
+		var newItem item
+		if dirs[i].Type == "dir" {
+			newItem = item {
+				name: "📁 " + dirs[i].Name,
+			}
+		}else {
+			newItem = item {
+				name: dirs[i].Name,
+			}
 		}
+
 		items = append(items, newItem)
 
 	}
@@ -82,7 +97,7 @@ func (d simpleDelegate) Render(w io.Writer, m list.Model, index int, listItem li
     str := i.Title()
 
     if index == m.Index() {
-        str = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render("> " + str)
+        str = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render("  " + str)
     } else {
         str = "  " + str
     }
