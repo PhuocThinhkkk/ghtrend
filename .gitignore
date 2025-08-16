@@ -1,0 +1,35 @@
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Compiled Go packages
+*.a
+
+# Dependency directories
+vendor/
+# This is for Go modules, if you're not using modules, you might exclude
+# other dependency management tools' directories like Godep/_workspace/
+
+# Go build cache
+.go/
+# This directory is created by Go 1.11+ for module caching
+
+# Logs and temporary files
+*.log
+*.tmp
+*.out
+
+# Editor/IDE specific files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+
+
+.env
