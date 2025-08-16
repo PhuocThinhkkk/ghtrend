@@ -44,8 +44,8 @@ func LoadCache(path string) ([]types.Repo, error) {
 	if err != nil {
 		return repos, err
 	}
-	if time.Now().Unix() - cache.Timestamp >= int64(time.Hour.Seconds())/ 4{
-		return repos, fmt.Errorf("cache miss cause of more than 15 minutes")
+	if time.Now().Unix() - cache.Timestamp >= int64(time.Hour.Seconds()){
+		return repos, fmt.Errorf("cache miss cause of more than 60 minutes")
 	}
 	return cache.Data, err
 }
