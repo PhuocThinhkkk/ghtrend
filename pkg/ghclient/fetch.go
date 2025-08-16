@@ -104,25 +104,16 @@ func getRawGithubReadmeFile( owner string, repoName string ) ( string , error ) 
 }
 
 
-// https://api.github.com/repos/vercel/next.js/contents
 func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 	var entries []types.EntryInfor
-	url := "https://api.github.com/repos/" + owner + "/" + name + "/contents"
+	url := "https://github.com/" + owner + "/" + name 
 	res, err := Fetch(url)
 	if err != nil {
 		return []types.EntryInfor{}, err
 	}
-	var contents []GitHubContent
-	err = json.Unmarshal(res, &contents)
+	entries, err = parseRootInfo(string(res))
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, c := range contents {
-		entries = append(entries, types.EntryInfor {
-			Name : c.Name,
-			Type: c.Type,
-		})
+		return []types.EntryInfor{}, err
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		priority := func(e types.EntryInfor) int {
