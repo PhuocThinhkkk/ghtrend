@@ -1,19 +1,21 @@
 package ghclient
 
 import (
-	"sort"
+	"encoding/json"
+	"fmt"
+	"ghtrend/pkg/cache"
+	"ghtrend/pkg/types"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
-	"encoding/json"
-	"io"
-	"sync"
-	"net/http"
-	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
+
 	"github.com/PuerkitoBio/goquery"
-	"ghtrend/pkg/types"
-	"ghtrend/pkg/cache"
 )
 type RepoList []types.Repo
 
@@ -146,6 +148,54 @@ func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 	return entries, nil
 }
 
+func getExtraInfor(owner string, name string ) (types.ExtraInfor, error) {
+	
+	url := "https://api.github.com/repos/" + owner + "/" + name 
+	res, err := Fetch(url)
+	if err != nil {
+		return types.ExtraInfor{}, err
+	}
+	var contents types.GitHubRepo
+	err = json.Unmarshal(res, &contents)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	info := types.ExtraInfor{
+		Size:  int16(contents.Size),
+		Watchers: int16(contents.WatchersCount),
+		OpenIssues: int16(contents.OpenIssuesCount),
+		SubscribersCount : int16(contents.SubscribersCount),
+	}	
+	return info, nil
+}
+
+func getLanguageBreakDown(owner string, name string ) (map[string]int, error) {
+	url := "https://api.github.com/repos/" + owner + "/" + name +"/languages"
+	res, err := Fetch(url)
+	if err != nil {
+		return  make(map[string]int), err
+	}
+
+	var raw map[string]string
+	err = json.Unmarshal(res, &raw)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	languages := make(map[string]int)
+	for k, v := range raw {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			log.Fatal(err)
+		}
+		languages[k] = n
+	}
+	return languages, nil
+}
+
+
+
 
 func (repos RepoList) getFullInfor() error {
 	var wg sync.WaitGroup
@@ -153,7 +203,7 @@ func (repos RepoList) getFullInfor() error {
 	
 	for i := range repos {
 		repo := &repos[i]
-		wg.Add(2)
+		wg.Add(4)
 
 		go func(repo *types.Repo) {
 
@@ -177,6 +227,28 @@ func (repos RepoList) getFullInfor() error {
 			}
 
 			repo.RootInfor = rootInfo
+		}(repo)
+
+		go func(repo *types.Repo) {
+
+			defer wg.Done()
+			extraInfo, err := getExtraInfor( repo.Owner, repo.Name)
+			if err != nil {
+				repo.ExtraInfor = types.ExtraInfor{}
+				errChan <- err
+			}
+
+			repo.ExtraInfor = extraInfo
+		}(repo)
+
+		go func(repo *types.Repo) {
+
+			defer wg.Done()
+			languages, err := getLanguageBreakDown( repo.Owner, repo.Name)
+			if err != nil {
+				errChan <- err
+			}
+			repo.LanguagesBreakDown = languages
 		}(repo)
 	}
 	wg.Wait()

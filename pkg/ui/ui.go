@@ -24,6 +24,10 @@ type Model struct {
 	active    activeComponent
 }
 
+func (m *Model) getCursorRepo() types.Repo {
+	return m.repoList[m.table.Cursor()]
+}
+
 func (m Model) Init() tea.Cmd {
     return nil
 }
@@ -60,8 +64,10 @@ func (m Model) View() string {
 	table := RenderTable(m.table)
 	m.setFileList()
 	fileList := RenderFileList(m.list)
+	extra := m.renderExtraInfor()
+	shit := lipgloss.JoinHorizontal(lipgloss.Top, fileList, extra)
 
-	left := lipgloss.JoinVertical(lipgloss.Left, table, fileList)
+	left := lipgloss.JoinVertical(lipgloss.Left, table, shit)
 	readMe, err:= RenderReadme(m.repoList[m.table.Cursor()].ReadMe)
 	if err != nil {
 		log.Fatal("Error when render readme markdown: ", err)

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 var docStyle = lipgloss.NewStyle().
+	Width(35).
     Border(lipgloss.NormalBorder(), true).
     BorderForeground(lipgloss.Color("63")) 
 
@@ -77,6 +78,11 @@ func InitialFileList(dirs []types.EntryInfor) list.Model{
 
 	m :=  list.New(items, simpleDelegate{}, 20, 15)
 	m.Title = "File Preview: "
+	m.SetFilteringEnabled(false)
+	m.SetShowHelp(false)
+	m.SetShowStatusBar(false)
+	m.SetShowPagination(true)
+
 	return m
 }
 

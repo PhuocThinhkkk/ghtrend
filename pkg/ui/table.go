@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
@@ -44,6 +45,7 @@ func InitialTable(repos []types.Repo) table.Model{
 		table.WithRows(rows),
 		table.WithFocused(true),
 		table.WithHeight(12),
+		table.WithWidth(80),
 	)
 
 	s := table.DefaultStyles()
@@ -61,6 +63,7 @@ func InitialTable(repos []types.Repo) table.Model{
 	Bold(true)
 
 	t.SetStyles(s)
+	fmt.Println("hi mom",t.Width())
 	return t
 
 }
