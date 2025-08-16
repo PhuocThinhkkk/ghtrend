@@ -87,7 +87,6 @@ func getReposInfo(html string) (RepoList, error) {
 	return repos, nil
 }
 
-// https://raw.githubusercontent.com/charmbracelet/glow/master/README.md
 func getRawGithubReadmeFile( owner string, repoName string ) ( string , error ) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
 	readmeText, err := Fetch(url)
@@ -140,7 +139,6 @@ func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 }
 
 func getExtraInfor(owner string, name string ) (types.ExtraInfor, error) {
-	
 	url := "https://api.github.com/repos/" + owner + "/" + name 
 	res, err := Fetch(url)
 	if err != nil {
@@ -168,19 +166,11 @@ func getLanguageBreakDown(owner string, name string ) (map[string]int, error) {
 		return  make(map[string]int), err
 	}
 
-	var raw map[string]string
-	err = json.Unmarshal(res, &raw)
+	var languages map[string]int
+	err = json.Unmarshal(res, &languages)
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	languages := make(map[string]int)
-	for k, v := range raw {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			log.Fatal(err)
-		}
-		languages[k] = n
+		log.Println(string(res))
+		panic(err)
 	}
 	return languages, nil
 }
