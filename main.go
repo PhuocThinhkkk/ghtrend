@@ -4,10 +4,12 @@ import (
 	"ghtrend/pkg/ghclient"
 	"log"
 	"ghtrend/pkg/ui"
+	"github.com/lpernett/godotenv"
 )
 
 
 func main(){
+	_ = godotenv.Load(".env")
 	
 	repos, err := ghclient.GetAllTrendingRepos()
 	if err != nil {
