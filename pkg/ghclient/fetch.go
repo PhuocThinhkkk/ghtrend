@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -37,8 +36,21 @@ type GitHubContent struct {
 }
 
 
-func Fetch(url string) ([]byte, error) {
-	res, err := http.Get(url)
+func fetch(url string) ([]byte, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	token := os.Getenv("GITHUB_TOKEN")
+	token = strings.TrimSpace(token)
+	if token != "" {
+		req.Header.Set("Authorization", "token " + token )
+	}
+
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -89,13 +101,13 @@ func getReposInfo(html string) (RepoList, error) {
 
 func getRawGithubReadmeFile( owner string, repoName string ) ( string , error ) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
-	readmeText, err := Fetch(url)
+	readmeText, err := fetch(url)
 	if err == nil {
 		return string(readmeText), nil
 	}
 
 	url2 := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/main/README.md"
-	readmeText2, err := Fetch(url2)
+	readmeText2, err := fetch(url2)
 	if err != nil {
 		return "", err
 	}
@@ -106,7 +118,7 @@ func getRawGithubReadmeFile( owner string, repoName string ) ( string , error ) 
 func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 	var entries []types.EntryInfor
 	url := "https://github.com/" + owner + "/" + name 
-	res, err := Fetch(url)
+	res, err := fetch(url)
 	if err != nil {
 		return []types.EntryInfor{}, err
 	}
@@ -140,7 +152,7 @@ func getRootInfor(owner  string, name string) ( []types.EntryInfor, error ){
 
 func getExtraInfor(owner string, name string ) (types.ExtraInfor, error) {
 	url := "https://api.github.com/repos/" + owner + "/" + name 
-	res, err := Fetch(url)
+	res, err := fetch(url)
 	if err != nil {
 		return types.ExtraInfor{}, err
 	}
@@ -161,7 +173,7 @@ func getExtraInfor(owner string, name string ) (types.ExtraInfor, error) {
 
 func getLanguageBreakDown(owner string, name string ) (map[string]int, error) {
 	url := "https://api.github.com/repos/" + owner + "/" + name +"/languages"
-	res, err := Fetch(url)
+	res, err := fetch(url)
 	if err != nil {
 		return  make(map[string]int), err
 	}
@@ -253,7 +265,7 @@ func GetAllTrendingRepos() (RepoList, error ) {
 		return cacheRepos, nil
 	}
 
-	res, err := Fetch("https://github.com/trending")
+	res, err := fetch("https://github.com/trending")
 	if err != nil{
 		return nil, err
 	}
