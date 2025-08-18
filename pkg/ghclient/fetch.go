@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"ghtrend/pkg/cache"
 	"ghtrend/pkg/types"
+	"ghtrend/pkg/utils"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -171,22 +173,39 @@ func getExtraInfor(owner string, name string ) (types.ExtraInfor, error) {
 	return info, nil
 }
 
-func getLanguageBreakDown(owner string, name string ) (map[string]int, error) {
-	url := "https://api.github.com/repos/" + owner + "/" + name +"/languages"
-	res, err := fetch(url)
-	if err != nil {
-		return  make(map[string]int), err
-	}
+func getLanguageBreakDown(owner string, name string) (map[string]int, error) {
+    url := "https://api.github.com/repos/" + owner + "/" + name + "/languages"
+    res, err := fetch(url)
+    if err != nil {
+        return nil, err
+    }
 
-	var languages map[string]int
-	err = json.Unmarshal(res, &languages)
-	if err != nil {
-		log.Println(string(res))
-		panic(err)
-	}
-	return languages, nil
+    var raw map[string]interface{}
+    if err = json.Unmarshal(res, &raw); err != nil {
+        log.Println(string(res))
+        return nil, err
+    }
+
+    languages := make(map[string]int)
+    for k, v := range raw {
+        switch val := v.(type) {
+        case float64:
+            languages[k] = int(val)
+        case int:
+            languages[k] = val
+        case string:
+            if i, err := strconv.Atoi(val); err == nil {
+                languages[k] = i
+            } else {
+                log.Printf("Warning: cannot convert value of %s to int: %v\n", k, val)
+            }
+        default:
+            log.Printf("Warning: unknown type for key %s: %T\n", k, val)
+        }
+    }
+
+    return languages, nil
 }
-
 
 
 
