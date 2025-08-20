@@ -65,7 +65,9 @@ func (m Model) View() string {
 	m.setFileList()
 	fileList := RenderFileList(m.list)
 	extra := m.renderExtraInfor()
-	shit := lipgloss.JoinHorizontal(lipgloss.Top, fileList, extra)
+	language := m.renderLanguagesBreakDown()
+	poop := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+	shit := lipgloss.JoinHorizontal(lipgloss.Top, fileList, poop)
 
 	left := lipgloss.JoinVertical(lipgloss.Left, table, shit)
 	readMe, err:= RenderReadme(m.repoList[m.table.Cursor()].ReadMe)
