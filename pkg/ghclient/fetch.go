@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"ghtrend/pkg/cache"
 	"ghtrend/pkg/types"
-	"ghtrend/pkg/utils"
 	"io"
 	"log"
 	"net/http"
