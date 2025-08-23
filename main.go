@@ -1,25 +1,14 @@
 package main
 
 import (
-	"ghtrend/pkg/ghclient"
-	"log"
-	"ghtrend/pkg/ui"
+	"ghtrend/pkg/app"
 	"github.com/lpernett/godotenv"
 )
 
 
 func main(){
 	_ = godotenv.Load(".env")
+	app.Run()
 	
-	repos, err := ghclient.GetAllTrendingRepos()
-	if err != nil {
-		log.Fatal(err)
-	}
-	program, err := ui.Render(repos)
-	if err != nil {
-		log.Fatal("err when render: ", err)
-	}
-
-	_ = program
 	
 }

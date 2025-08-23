@@ -4,6 +4,7 @@ import (
 	"strings"
 	"path"
 	"regexp"
+	"log"
 	"sort"
 	"ghtrend/pkg/types"
 
@@ -11,6 +12,32 @@ import (
 )
 
 var ghHrefRe = regexp.MustCompile(`^/[^/]+/[^/]+/(tree|blob)/[^/]+/.+`)
+
+func parseTrendingPage(html string) (RepoList, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		log.Println("error when parsing html")
+		return nil, err
+	}
+	var repos RepoList
+	doc.Find("article.Box-row").Each(func(i int, s *goquery.Selection) {
+		name := strings.TrimSpace(s.Find("h2 a").Text())
+		owner, repoName := "", ""
+		if parts := strings.Split(name, "/\n\n"); len(parts) == 2 {
+			repoName = strings.ReplaceAll(parts[1], " ", "")
+			owner = strings.ReplaceAll(parts[0], " ", "")
+		}
+		url, _ := s.Find("h2 a").Attr("href")
+		description := strings.TrimSpace(s.Find("p").Text())
+		lang := strings.TrimSpace(s.Find("span[itemprop='programmingLanguage']").Text())
+		stars := strings.TrimSpace(s.Find("a[href$='/stargazers']").First().Text())
+		forks := strings.TrimSpace(s.Find("a[href$='/network/members']").First().Text())
+
+		repo := NewRepo(owner, repoName, lang, "https://github.com"+url, description, forks, stars)
+		repos = append(repos, *repo)
+	})
+	return repos, nil
+}
 
 func parseRootInfo(html string) ([]types.EntryInfor, error) {
 	r := strings.NewReader(html)
@@ -55,3 +82,19 @@ func parseRootInfo(html string) ([]types.EntryInfor, error) {
 	return entries, nil
 }
 
+func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *types.Repo {
+	return &types.Repo{
+		Owner: owner,
+		Name:  name,
+		Url:   url,
+		Description: description,
+		Language: lang,
+		Forks: forks,
+		Stars: starts,
+		ReadMe: "",
+		Index: -1,
+		LanguagesBreakDown: map[string]int{},
+		ExtraInfor: types.ExtraInfor{},
+		RootInfor: []types.EntryInfor{},
+	}
+}
