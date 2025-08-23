@@ -2,7 +2,6 @@ package ghclient
 
 import (
 	"encoding/json"
-	"ghtrend/pkg/types"
 	"io"
 	"log"
 	"net/http"
@@ -10,10 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
+	"ghtrend/pkg/types"
 )
-
-type RepoList []types.Repo
 
 func fetch(url string) ([]byte, error) {
 	client := &http.Client{}
@@ -43,7 +40,6 @@ func fetch(url string) ([]byte, error) {
 	return body, nil
 }
 
-
 func getRawGithubReadmeFile(owner string, repoName string) (string, error) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
 	readmeText, err := fetch(url)
@@ -59,19 +55,19 @@ func getRawGithubReadmeFile(owner string, repoName string) (string, error) {
 	return string(readmeText2), nil
 }
 
-func getRootInfor(owner string, name string) ([]types.EntryInfor, error) {
-	var entries []types.EntryInfor
+func getRootInfor(owner string, name string) ([]EntryInfor, error) {
+	var entries []EntryInfor
 	url := "https://github.com/" + owner + "/" + name
 	res, err := fetch(url)
 	if err != nil {
-		return []types.EntryInfor{}, err
+		return []EntryInfor{}, err
 	}
 	entries, err = parseRootInfo(string(res))
 	if err != nil {
-		return []types.EntryInfor{}, err
+		return []EntryInfor{}, err
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		priority := func(e types.EntryInfor) int {
+		priority := func(e EntryInfor) int {
 			if e.Type == "dir" && strings.HasPrefix(e.Name, ".") {
 				return 0
 			}
@@ -94,11 +90,11 @@ func getRootInfor(owner string, name string) ([]types.EntryInfor, error) {
 	return entries, nil
 }
 
-func getExtraInfor(owner string, name string) (types.ExtraInfor, error) {
+func getExtraInfor(owner string, name string) (ExtraInfor, error) {
 	url := "https://api.github.com/repos/" + owner + "/" + name
 	res, err := fetch(url)
 	if err != nil {
-		return types.ExtraInfor{}, err
+		return ExtraInfor{}, err
 	}
 	var contents types.GitHubRepo
 	err = json.Unmarshal(res, &contents)
@@ -106,7 +102,7 @@ func getExtraInfor(owner string, name string) (types.ExtraInfor, error) {
 		log.Fatal(err)
 	}
 
-	info := types.ExtraInfor{
+	info := ExtraInfor{
 		Size:             int16(contents.Size),
 		Watchers:         int16(contents.WatchersCount),
 		OpenIssues:       int16(contents.OpenIssuesCount),
@@ -148,66 +144,3 @@ func getLanguageBreakDown(owner string, name string) (map[string]int, error) {
 
 	return languages, nil
 }
-
-func (repos RepoList) getFullInfor() error {
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(repos))
-
-	for i := range repos {
-		repo := &repos[i]
-		wg.Add(4)
-
-		go func(repo *types.Repo) {
-
-			defer wg.Done()
-			readme, err := getRawGithubReadmeFile(repo.Owner, repo.Name)
-			if err != nil {
-				repo.ReadMe = ""
-				errChan <- err
-			}
-
-			repo.ReadMe = readme
-		}(repo)
-
-		go func(repo *types.Repo) {
-
-			defer wg.Done()
-			rootInfo, err := getRootInfor(repo.Owner, repo.Name)
-			if err != nil {
-				repo.RootInfor = []types.EntryInfor{}
-				errChan <- err
-			}
-
-			repo.RootInfor = rootInfo
-		}(repo)
-
-		go func(repo *types.Repo) {
-
-			defer wg.Done()
-			extraInfo, err := getExtraInfor(repo.Owner, repo.Name)
-			if err != nil {
-				repo.ExtraInfor = types.ExtraInfor{}
-				errChan <- err
-			}
-
-			repo.ExtraInfor = extraInfo
-		}(repo)
-
-		go func(repo *types.Repo) {
-
-			defer wg.Done()
-			languages, err := getLanguageBreakDown(repo.Owner, repo.Name)
-			if err != nil {
-				errChan <- err
-			}
-			repo.LanguagesBreakDown = languages
-		}(repo)
-	}
-	wg.Wait()
-	close(errChan)
-	if len(errChan) > 0 {
-		return <-errChan
-	}
-	return nil
-}
-

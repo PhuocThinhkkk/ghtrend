@@ -9,6 +9,4 @@ import (
 func main(){
 	_ = godotenv.Load(".env")
 	app.Run()
-	
-	
 }

@@ -3,7 +3,6 @@ package app
 import (
 	"ghtrend/pkg/cache"
 	"ghtrend/pkg/ghclient"
-	"ghtrend/pkg/types"
 	"ghtrend/pkg/ui"
 	"log"
 	"os"
@@ -11,7 +10,7 @@ import (
 )
 
 func Run() {
-	repos := []types.Repo{}
+	repos := []ghclient.Repo{}
 	cacheDir, _ := os.UserCacheDir()
 	ghtrendDir := filepath.Join(cacheDir, "ghtrend")
 	cachePath := filepath.Join(ghtrendDir, "cachedata.json")

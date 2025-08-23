@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"ghtrend/pkg/types"
+	"ghtrend/pkg/ghclient"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -17,15 +17,17 @@ type activeComponent int8
 const tableActive = 0
 const listActive = 1
 
+type Repo = ghclient.Repo
+
 type Model struct {
 	table    table.Model
 	list     list.Model
-	repoList []types.Repo
+	repoList []Repo
 	viewport viewport.Model
 	active   activeComponent
 }
 
-func (m *Model) getCursorRepo() types.Repo {
+func (m *Model) getCursorRepo() Repo {
 	return m.repoList[m.table.Cursor()]
 }
 
@@ -100,7 +102,7 @@ func (m Model) View() string {
 	return content
 }
 
-func Render(repos []types.Repo) (tea.Model, error) {
+func Render(repos []Repo) (tea.Model, error) {
 	table := InitialTable(repos)
 	list := InitialFileList(repos[0].RootInfor)
 	m := Model{
