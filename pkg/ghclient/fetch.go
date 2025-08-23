@@ -12,7 +12,7 @@ import (
 	"ghtrend/pkg/types"
 )
 
-func fetch(url string) ([]byte, error) {
+func Fetch(url string) ([]byte, error) {
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -42,13 +42,13 @@ func fetch(url string) ([]byte, error) {
 
 func getRawGithubReadmeFile(owner string, repoName string) (string, error) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
-	readmeText, err := fetch(url)
+	readmeText, err := Fetch(url)
 	if err == nil {
 		return string(readmeText), nil
 	}
 
 	url2 := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/main/README.md"
-	readmeText2, err := fetch(url2)
+	readmeText2, err := Fetch(url2)
 	if err != nil {
 		return "", err
 	}
@@ -58,11 +58,11 @@ func getRawGithubReadmeFile(owner string, repoName string) (string, error) {
 func getRootInfor(owner string, name string) ([]EntryInfor, error) {
 	var entries []EntryInfor
 	url := "https://github.com/" + owner + "/" + name
-	res, err := fetch(url)
+	res, err := Fetch(url)
 	if err != nil {
 		return []EntryInfor{}, err
 	}
-	entries, err = parseRootInfo(string(res))
+	entries, err = ParseRootInfo(string(res))
 	if err != nil {
 		return []EntryInfor{}, err
 	}
@@ -92,7 +92,7 @@ func getRootInfor(owner string, name string) ([]EntryInfor, error) {
 
 func getExtraInfor(owner string, name string) (ExtraInfor, error) {
 	url := "https://api.github.com/repos/" + owner + "/" + name
-	res, err := fetch(url)
+	res, err := Fetch(url)
 	if err != nil {
 		return ExtraInfor{}, err
 	}
@@ -113,7 +113,7 @@ func getExtraInfor(owner string, name string) (ExtraInfor, error) {
 
 func getLanguageBreakDown(owner string, name string) (map[string]int, error) {
 	url := "https://api.github.com/repos/" + owner + "/" + name + "/languages"
-	res, err := fetch(url)
+	res, err := Fetch(url)
 	if err != nil {
 		return nil, err
 	}

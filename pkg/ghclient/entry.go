@@ -5,7 +5,7 @@ import (
 
 func GetAllTrendingRepos() (RepoList, error) {
 
-	res, err := fetch("https://github.com/trending")
+	res, err := Fetch("https://github.com/trending")
 	if err != nil {
 		return nil, err
 	}

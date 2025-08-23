@@ -38,7 +38,7 @@ func parseTrendingPage(html string) (RepoList, error) {
 	return repos, nil
 }
 
-func parseRootInfo(html string) ([]EntryInfor, error) {
+func ParseRootInfo(html string) ([]EntryInfor, error) {
 	r := strings.NewReader(html)
 	doc, err := goquery.NewDocumentFromReader(r)
 	if err != nil {
