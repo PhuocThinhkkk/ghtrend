@@ -43,6 +43,7 @@ func (repos RepoList) loadDetails() error {
 		go repo.loadRootInfo(errChan, &wg)
 		go repo.loadExtraInfo(errChan, &wg)
 		go repo.loadLanguageBreakdown(errChan, &wg)
+		go repo.loadReadMe(errChan, &wg)
 	}
 	wg.Wait()
 	close(errChan)
@@ -82,4 +83,14 @@ func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup) {
 		return
 	}
 	r.LanguagesBreakDown = langs
+}
+
+func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+	readme, err := getRawGithubReadmeFile(r.Owner, r.Name)
+	if err != nil {
+		errChan <- err
+		return
+	}
+	r.ReadMe = readme
 }

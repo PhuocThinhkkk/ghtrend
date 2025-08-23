@@ -4,9 +4,6 @@
 *.so
 *.dylib
 
-# Test binaries
-*.test
-
 # Compiled Go packages
 *.a
 
