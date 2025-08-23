@@ -17,6 +17,8 @@ type Repo struct {
 	RootInfor          []EntryInfor   `json:"root_infor"`
 	ExtraInfor         ExtraInfor     `json:"extra_info"`
 	LanguagesBreakDown map[string]int `json:"language_break_down"`
+	HtmlPageTerm       string         `json:"html_page_term"`
+	IsLoadedRepoPage   chan (bool)    `json:"is_loaded_repo_page"`
 }
 
 type ExtraInfor struct {
@@ -39,7 +41,12 @@ func (repos RepoList) loadDetails() error {
 
 	for i := range repos {
 		repo := &repos[i]
-		wg.Add(4)
+		if repo.IsLoadedRepoPage == nil {
+			repo.IsLoadedRepoPage = make(chan bool, 1)
+		}
+		defer close(repo.IsLoadedRepoPage)
+		wg.Add(5)
+		go repo.loadHtmlPageTerm(errChan, &wg)
 		go repo.loadRootInfo(errChan, &wg)
 		go repo.loadExtraInfo(errChan, &wg)
 		go repo.loadLanguageBreakdown(errChan, &wg)
@@ -55,6 +62,7 @@ func (repos RepoList) loadDetails() error {
 
 func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
+	<- r.IsLoadedRepoPage
 	rootInfo, err := getRootInfor(r.Owner, r.Name)
 	if err != nil {
 		r.RootInfor = []EntryInfor{}
@@ -77,6 +85,10 @@ func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup) {
 
 func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
+	isLoaded := <- r.IsLoadedRepoPage
+	if isLoaded != false {
+		return 
+	}
 	langs, err := getLanguageBreakDown(r.Owner, r.Name)
 	if err != nil {
 		errChan <- err
@@ -87,10 +99,27 @@ func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup) {
 
 func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
+	isLoaded := <- r.IsLoadedRepoPage
+	if isLoaded != false {
+		return 
+	}
 	readme, err := getRawGithubReadmeFile(r.Owner, r.Name)
 	if err != nil {
 		errChan <- err
 		return
 	}
 	r.ReadMe = readme
+}
+
+func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+	url := "https://github.com/" + r.Owner + "/" + r.Name
+	res, err := Fetch(url)
+	if err != nil {
+		errChan <- err
+		r.IsLoadedRepoPage <- false
+		return
+	}
+	r.HtmlPageTerm = string(res)
+	r.IsLoadedRepoPage <- true
 }

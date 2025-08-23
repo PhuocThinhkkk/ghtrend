@@ -78,6 +78,28 @@ func ParseRootInfo(html string) ([]EntryInfor, error) {
 	})
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+
+	sort.Slice(entries, func(i, j int) bool {
+		priority := func(e EntryInfor) int {
+			if e.Type == "dir" && strings.HasPrefix(e.Name, ".") {
+				return 0
+			}
+			if e.Type == "dir" {
+				return 1
+			}
+			return 2
+		}
+
+		pi := priority(entries[i])
+		pj := priority(entries[j])
+
+		if pi != pj {
+			return pi < pj
+		}
+
+		return entries[i].Name < entries[j].Name
+	})
+
 	return entries, nil
 }
 
@@ -95,5 +117,6 @@ func NewRepo(owner string, name string, lang string, url string, description str
 		LanguagesBreakDown: map[string]int{},
 		ExtraInfor: ExtraInfor{},
 		RootInfor: []EntryInfor{},
+		IsLoadedRepoPage: make(chan(bool), 1),
 	}
 }

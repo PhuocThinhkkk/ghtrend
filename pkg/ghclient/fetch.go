@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"ghtrend/pkg/types"
@@ -40,6 +39,7 @@ func Fetch(url string) ([]byte, error) {
 	return body, nil
 }
 
+
 func getRawGithubReadmeFile(owner string, repoName string) (string, error) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
 	readmeText, err := Fetch(url)
@@ -66,27 +66,6 @@ func getRootInfor(owner string, name string) ([]EntryInfor, error) {
 	if err != nil {
 		return []EntryInfor{}, err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		priority := func(e EntryInfor) int {
-			if e.Type == "dir" && strings.HasPrefix(e.Name, ".") {
-				return 0
-			}
-			if e.Type == "dir" {
-				return 1
-			}
-			return 2
-		}
-
-		pi := priority(entries[i])
-		pj := priority(entries[j])
-
-		if pi != pj {
-			return pi < pj
-		}
-
-		return entries[i].Name < entries[j].Name
-	})
-
 	return entries, nil
 }
 
