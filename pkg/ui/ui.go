@@ -1,27 +1,28 @@
 package ui
 
 import (
-	"log"
-    tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"ghtrend/pkg/types"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"log"
 )
 
 var debugMode = true
 
 type activeComponent int8
+
 const tableActive = 0
-const listActive  = 1
+const listActive = 1
 
 type Model struct {
-   	table table.Model
-	list  list.Model
+	table    table.Model
+	list     list.Model
 	repoList []types.Repo
-	viewport  viewport.Model
-	active    activeComponent
+	viewport viewport.Model
+	active   activeComponent
 }
 
 func (m *Model) getCursorRepo() types.Repo {
@@ -29,33 +30,48 @@ func (m *Model) getCursorRepo() types.Repo {
 }
 
 func (m Model) Init() tea.Cmd {
-    return nil
+	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-    switch msg := msg.(type) {
-    case tea.KeyMsg:
-        switch msg.String() {
-        case "q", "ctrl+c":
-            return m, tea.Quit
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
 		case "tab":
 			if m.active == tableActive {
 				m.active = listActive
-			} else if  m.active == listActive {
+			} else if m.active == listActive {
 				m.active = tableActive
 			}
-      
-        }
+
+		}
 	case tea.WindowSizeMsg:
 		m.viewport.Width = msg.Width
 		m.viewport.Height = msg.Height
 	}
-	if m.active == tableActive {
-		m.table, cmd = m.table.Update(msg)		
-	}
-	if m.active == listActive {
-		m.list, cmd = m.list.Update(msg)		
+
+	switch m.active {
+	case tableActive:
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "up" || km.String() == "down") {
+			if (km.String() == "up" && m.table.Cursor() == 0) ||
+				(km.String() == "down" && m.table.Cursor() == len(m.table.Rows())-1) {
+				return m, cmd
+			}
+		}
+		m.table, cmd = m.table.Update(msg)
+
+	case listActive:
+		lenList := len(m.getCursorRepo().RootInfor)
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "up" || km.String() == "down") {
+			if (km.String() == "up" && m.list.Index() == 0) ||
+				(km.String() == "down" && m.list.Index() == lenList-1) {
+				return m, cmd 
+			}
+		}
+		m.list, cmd = m.list.Update(msg)
 	}
 	return m, cmd
 }
@@ -70,7 +86,7 @@ func (m Model) View() string {
 	shit := lipgloss.JoinHorizontal(lipgloss.Top, fileList, poop)
 
 	left := lipgloss.JoinVertical(lipgloss.Left, table, shit)
-	readMe, err:= RenderReadme(m.repoList[m.table.Cursor()].ReadMe)
+	readMe, err := RenderReadme(m.repoList[m.table.Cursor()].ReadMe)
 	if err != nil {
 		log.Fatal("Error when render readme markdown: ", err)
 	}
@@ -88,11 +104,11 @@ func Render(repos []types.Repo) (tea.Model, error) {
 	table := InitialTable(repos)
 	list := InitialFileList(repos[0].RootInfor)
 	m := Model{
-		table: table,
-		list :  list,
+		table:    table,
+		list:     list,
 		repoList: repos,
-		active: tableActive,
+		active:   tableActive,
 	}
 	p := tea.NewProgram(m)
-    return p.Run()
+	return p.Run()
 }

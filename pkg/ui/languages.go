@@ -2,16 +2,15 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	
 	languagesBorderStyle = lipgloss.NewStyle().
-    Border(lipgloss.NormalBorder(), true).
-    BorderForeground(lipgloss.Color("63")) 
-
+		Border(lipgloss.NormalBorder(), true).
+		BorderForeground(lipgloss.Color("63"))
 )
 
 func (m *Model) renderLanguagesBreakDown() string {
@@ -19,16 +18,28 @@ func (m *Model) renderLanguagesBreakDown() string {
 	totalWidth := 40
 	repo := m.getCursorRepo()
 	languageStrings := ""
+	type kv struct {
+		lang  string
+		lines int
+	}
+	var sortedPairs []kv
+	for k, v := range repo.LanguagesBreakDown {
+		sortedPairs = append(sortedPairs, kv{k, v})
+	}
+
+	sort.Slice(sortedPairs, func(i, j int) bool {
+		return sortedPairs[i].lines > sortedPairs[j].lines
+	})
+
 	i := 0
-	for lang, percent := range repo.LanguagesBreakDown {
+	for _, p := range sortedPairs {
 		i += 1
-		languageStrings += renderEachField(totalWidth, lang, fmt.Sprintf("%d", percent))
+		languageStrings += renderEachField(totalWidth, p.lang, fmt.Sprintf("%d", p.lines))
 		if i >= 6 {
-			languageStrings +=  "...\n"
+			languageStrings += "...\n"
 			break
 		}
 	}
 	return languagesBorderStyle.Width(totalWidth).Render(languageStrings)
 
 }
-
