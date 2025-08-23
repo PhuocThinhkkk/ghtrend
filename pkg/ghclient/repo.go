@@ -5,89 +5,44 @@ import (
 )
 
 type Repo struct {
-	Index       int    `json:"index"`
-	Name        string `json:"name"`
-	Owner       string `json:"owner"`
-	Url         string `json:"url"`
-	Description string `json:"description"`
-	Language    string `json:"language"`
-	Stars       string `json:"stars"`
-	Forks       string `json:"forks"`
-	ReadMe      string `json:"readme"` 
-	RootInfor   []EntryInfor  `json:"root_infor"`
-	ExtraInfor  ExtraInfor    `json:"extra_info"`
-	LanguagesBreakDown map[string]int  `json:"language_break_down"`
-
+	Index              int            `json:"index"`
+	Name               string         `json:"name"`
+	Owner              string         `json:"owner"`
+	Url                string         `json:"url"`
+	Description        string         `json:"description"`
+	Language           string         `json:"language"`
+	Stars              string         `json:"stars"`
+	Forks              string         `json:"forks"`
+	ReadMe             string         `json:"readme"`
+	RootInfor          []EntryInfor   `json:"root_infor"`
+	ExtraInfor         ExtraInfor     `json:"extra_info"`
+	LanguagesBreakDown map[string]int `json:"language_break_down"`
 }
 
 type ExtraInfor struct {
-	Size        int16    `json:"size"`
-	Watchers    int16     `json:"watchers"`
-	OpenIssues   int16     `json:"open_issues"`
-	SubscribersCount  int16   `json:"Supscribers_count"`
+	Size             int16 `json:"size"`
+	Watchers         int16 `json:"watchers"`
+	OpenIssues       int16 `json:"open_issues"`
+	SubscribersCount int16 `json:"Supscribers_count"`
 }
 
 type EntryInfor struct {
-	Name   string `json:"name"`
-	Type   string  `json:"type"`
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 type RepoList []Repo
 
-
-func (repos RepoList) getFullInfor() error {
+func (repos RepoList) loadDetails() error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(repos))
 
 	for i := range repos {
 		repo := &repos[i]
 		wg.Add(4)
-
-		go func(repo * Repo) {
-
-			defer wg.Done()
-			readme, err := getRawGithubReadmeFile(repo.Owner, repo.Name)
-			if err != nil {
-				repo.ReadMe = ""
-				errChan <- err
-			}
-
-			repo.ReadMe = readme
-		}(repo)
-
-		go func(repo *Repo) {
-
-			defer wg.Done()
-			rootInfo, err := getRootInfor(repo.Owner, repo.Name)
-			if err != nil {
-				repo.RootInfor = []EntryInfor{}
-				errChan <- err
-			}
-
-			repo.RootInfor = rootInfo
-		}(repo)
-
-		go func(repo *Repo) {
-
-			defer wg.Done()
-			extraInfo, err := getExtraInfor(repo.Owner, repo.Name)
-			if err != nil {
-				repo.ExtraInfor = ExtraInfor{}
-				errChan <- err
-			}
-
-			repo.ExtraInfor = extraInfo
-		}(repo)
-
-		go func(repo *Repo) {
-
-			defer wg.Done()
-			languages, err := getLanguageBreakDown(repo.Owner, repo.Name)
-			if err != nil {
-				errChan <- err
-			}
-			repo.LanguagesBreakDown = languages
-		}(repo)
+		go repo.loadRootInfo(errChan, &wg)
+		go repo.loadExtraInfo(errChan, &wg)
+		go repo.loadLanguageBreakdown(errChan, &wg)
 	}
 	wg.Wait()
 	close(errChan)
@@ -97,3 +52,34 @@ func (repos RepoList) getFullInfor() error {
 	return nil
 }
 
+func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+	rootInfo, err := getRootInfor(r.Owner, r.Name)
+	if err != nil {
+		r.RootInfor = []EntryInfor{}
+		errChan <- err
+		return
+	}
+	r.RootInfor = rootInfo
+}
+
+func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+	extraInfo, err := getExtraInfor(r.Owner, r.Name)
+	if err != nil {
+		r.ExtraInfor = ExtraInfor{}
+		errChan <- err
+		return
+	}
+	r.ExtraInfor = extraInfo
+}
+
+func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+	langs, err := getLanguageBreakDown(r.Owner, r.Name)
+	if err != nil {
+		errChan <- err
+		return
+	}
+	r.LanguagesBreakDown = langs
+}

@@ -18,6 +18,7 @@ const tableActive = 0
 const listActive = 1
 
 type Repo = ghclient.Repo
+type EntryInfor = ghclient.EntryInfor
 
 type Model struct {
 	table    table.Model

@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
-	"ghtrend/pkg/types"
 	"github.com/charmbracelet/bubbles/table"
 )
 
@@ -18,7 +17,7 @@ func RenderTable(t table.Model) string {
 	
 }
 
-func InitialTable(repos []types.Repo) table.Model{
+func InitialTable(repos []Repo) table.Model{
 
    	columns := []table.Column{
 		{Title: "Owner", Width: 15 },

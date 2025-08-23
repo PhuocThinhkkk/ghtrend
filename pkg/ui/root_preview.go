@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"ghtrend/pkg/types"
 	"fmt"
 	"io"
 
@@ -49,7 +48,7 @@ func RenderFileList(m list.Model) string {
 	return docStyle.Render(m.View())
 }
 
-func InitialFileList(dirs []types.EntryInfor) list.Model{
+func InitialFileList(dirs []EntryInfor) list.Model{
 	items := []list.Item{}
 
 	for i := 0; i <= len(dirs) - 1 ; i++ {

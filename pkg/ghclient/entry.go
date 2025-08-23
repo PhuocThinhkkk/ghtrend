@@ -9,6 +9,7 @@ func GetAllTrendingRepos() (RepoList, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	html := string(res)
 
 	repos, err := parseTrendingPage(html)
@@ -16,7 +17,7 @@ func GetAllTrendingRepos() (RepoList, error) {
 		return nil, err
 	}
 
-	err = repos.getFullInfor()
+	err = repos.loadDetails()
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"log"
 	"sort"
-	"ghtrend/pkg/types"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -39,7 +38,7 @@ func parseTrendingPage(html string) (RepoList, error) {
 	return repos, nil
 }
 
-func parseRootInfo(html string) ([]types.EntryInfor, error) {
+func parseRootInfo(html string) ([]EntryInfor, error) {
 	r := strings.NewReader(html)
 	doc, err := goquery.NewDocumentFromReader(r)
 	if err != nil {
@@ -47,7 +46,7 @@ func parseRootInfo(html string) ([]types.EntryInfor, error) {
 	}
 
 	seen := make(map[string]bool)
-	var entries []types.EntryInfor
+	var entries []EntryInfor
 
 	doc.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
@@ -72,7 +71,7 @@ func parseRootInfo(html string) ([]types.EntryInfor, error) {
 			return
 		}
 
-		entries = append(entries, types.EntryInfor{
+		entries = append(entries, EntryInfor{
 			Type: t,
 			Name: name,
 		})
@@ -82,8 +81,8 @@ func parseRootInfo(html string) ([]types.EntryInfor, error) {
 	return entries, nil
 }
 
-func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *types.Repo {
-	return &types.Repo{
+func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {
+	return &Repo{
 		Owner: owner,
 		Name:  name,
 		Url:   url,
@@ -94,7 +93,7 @@ func NewRepo(owner string, name string, lang string, url string, description str
 		ReadMe: "",
 		Index: -1,
 		LanguagesBreakDown: map[string]int{},
-		ExtraInfor: types.ExtraInfor{},
-		RootInfor: []types.EntryInfor{},
+		ExtraInfor: ExtraInfor{},
+		RootInfor: []EntryInfor{},
 	}
 }
