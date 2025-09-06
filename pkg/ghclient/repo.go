@@ -18,7 +18,6 @@ type Repo struct {
 	ExtraInfor         ExtraInfor     `json:"extra_info"`
 	LanguagesBreakDown map[string]int `json:"language_break_down"`
 	HtmlPageTerm       string         `json:"html_page_term"`
-	IsLoadedRepoPage   chan (bool)    `json:"is_loaded_repo_page"`
 }
 
 type ExtraInfor struct {
@@ -40,17 +39,20 @@ func (repos RepoList) loadDetails() error {
 	errChan := make(chan error, len(repos))
 
 	for i := range repos {
+	    signal := make(chan struct{})
 		repo := &repos[i]
-		if repo.IsLoadedRepoPage == nil {
-			repo.IsLoadedRepoPage = make(chan bool, 1)
-		}
-		defer close(repo.IsLoadedRepoPage)
+		defer func() {
+			if repo.HtmlPageTerm != "" {
+				repo.HtmlPageTerm = "done"
+			}
+		}()
+
 		wg.Add(5)
-		go repo.loadHtmlPageTerm(errChan, &wg)
-		go repo.loadRootInfo(errChan, &wg)
+		go repo.loadHtmlPageTerm(errChan, &wg, signal)
+		go repo.loadRootInfo(errChan, &wg, signal)
 		go repo.loadExtraInfo(errChan, &wg)
-		go repo.loadLanguageBreakdown(errChan, &wg)
-		go repo.loadReadMe(errChan, &wg)
+		go repo.loadLanguageBreakdown(errChan, &wg, signal)
+		go repo.loadReadMe(errChan, &wg, signal)
 	}
 	wg.Wait()
 	close(errChan)
@@ -60,10 +62,13 @@ func (repos RepoList) loadDetails() error {
 	return nil
 }
 
-func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup) {
+func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
-	<- r.IsLoadedRepoPage
-	rootInfo, err := getRootInfor(r.Owner, r.Name)
+	<-signal
+	if r.HtmlPageTerm == "" {
+		return
+	}
+	rootInfo, err := ParseRootInfo(r.HtmlPageTerm)
 	if err != nil {
 		r.RootInfor = []EntryInfor{}
 		errChan <- err
@@ -83,12 +88,9 @@ func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup) {
 	r.ExtraInfor = extraInfo
 }
 
-func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup) {
+func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
-	isLoaded := <- r.IsLoadedRepoPage
-	if isLoaded != false {
-		return 
-	}
+	<-signal
 	langs, err := getLanguageBreakDown(r.Owner, r.Name)
 	if err != nil {
 		errChan <- err
@@ -97,12 +99,9 @@ func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup) {
 	r.LanguagesBreakDown = langs
 }
 
-func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup) {
+func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
-	isLoaded := <- r.IsLoadedRepoPage
-	if isLoaded != false {
-		return 
-	}
+	<-signal
 	readme, err := getRawGithubReadmeFile(r.Owner, r.Name)
 	if err != nil {
 		errChan <- err
@@ -111,15 +110,15 @@ func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup) {
 	r.ReadMe = readme
 }
 
-func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup) {
+func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup, signal chan<- struct{}) {
 	defer wg.Done()
 	url := "https://github.com/" + r.Owner + "/" + r.Name
 	res, err := Fetch(url)
 	if err != nil {
 		errChan <- err
-		r.IsLoadedRepoPage <- false
+		close(signal)
 		return
 	}
 	r.HtmlPageTerm = string(res)
-	r.IsLoadedRepoPage <- true
+	close(signal)
 }

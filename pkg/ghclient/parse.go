@@ -117,6 +117,6 @@ func NewRepo(owner string, name string, lang string, url string, description str
 		LanguagesBreakDown: map[string]int{},
 		ExtraInfor: ExtraInfor{},
 		RootInfor: []EntryInfor{},
-		IsLoadedRepoPage: make(chan(bool), 1),
+		HtmlPageTerm: "",
 	}
 }
