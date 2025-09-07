@@ -75,7 +75,7 @@ func InitialFileList(dirs []EntryInfor) list.Model{
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
 	Foreground(lipgloss.Color("229"))
 
-	m :=  list.New(items, simpleDelegate{}, 20, 15)
+	m :=  list.New(items, simpleDelegate{}, 20, 17)
 	m.Title = "File Preview: "
 	m.SetFilteringEnabled(false)
 	m.SetShowHelp(false)

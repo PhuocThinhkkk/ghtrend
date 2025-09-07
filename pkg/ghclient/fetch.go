@@ -2,7 +2,6 @@ package ghclient
 
 import (
 	"encoding/json"
-	"fmt"
 	"ghtrend/pkg/types"
 	"io"
 	"log"
@@ -13,7 +12,6 @@ import (
 )
 
 func Fetch(url string) ([]byte, error) {
-	fmt.Println(url)
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", url, nil)
