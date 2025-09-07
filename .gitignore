@@ -4,6 +4,8 @@
 *.so
 *.dylib
 
+ghtrend
+
 # Compiled Go packages
 *.a
 
