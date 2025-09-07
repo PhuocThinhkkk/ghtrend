@@ -1,11 +1,20 @@
 package ghclient
 
 import (
+	"strings"
+	"ghtrend/pkg/configs/flags"
 )
 
-func GetAllTrendingRepos() (RepoList, error) {
+func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
+	url := "https://github.com/trending"
+	if cfg.Language != "All" {
+		url += "/" + strings.ToLower(cfg.Language)
+	}
+	if cfg.Since != "daily" {
+		url += "?since=" + cfg.Language
+	}
 
-	res, err := Fetch("https://github.com/trending")
+	res, err := Fetch(url)
 	if err != nil {
 		return nil, err
 	}

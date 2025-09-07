@@ -17,7 +17,7 @@ func RenderTable(t table.Model) string {
 	
 }
 
-func InitialTable(repos []Repo) table.Model{
+func InitialTable(repos []Repo, limit int) table.Model{
 
    	columns := []table.Column{
 		{Title: "Owner", Width: 15 },
@@ -29,6 +29,9 @@ func InitialTable(repos []Repo) table.Model{
 	var rows []table.Row
 
 	for _, repo := range repos {
+		if limit == 0 {
+			break
+		}
 		rows = append(rows, table.Row{
 			repo.Owner,
 			repo.Name,
@@ -36,6 +39,7 @@ func InitialTable(repos []Repo) table.Model{
 			repo.Forks,
 			repo.Language,
 		})
+		limit--
 	}
 
 

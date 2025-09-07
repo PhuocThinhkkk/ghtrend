@@ -1,13 +1,17 @@
 package ui
 
 import (
+	"ghtrend/pkg/configs/flags"
 	"ghtrend/pkg/ghclient"
+	"log"
+	"os"
+	"fmt"
+
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"log"
 )
 
 var debugMode = true
@@ -103,8 +107,13 @@ func (m Model) View() string {
 	return content
 }
 
-func Render(repos []Repo) (tea.Model, error) {
-	table := InitialTable(repos)
+func Render(cfg *flags.CmdConfig, repos []Repo) (tea.Model, error) {
+	table := InitialTable(repos, cfg.Limit)
+	if len(repos) == 0 {
+		fmt.Println("There was no repos match that")
+		os.Exit(0)
+	}
+
 	list := InitialFileList(repos[0].RootInfor)
 	m := Model{
 		table:    table,
