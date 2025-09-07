@@ -2,12 +2,17 @@ package app
 
 import (
 	"ghtrend/pkg/cache"
+	"ghtrend/pkg/configs/flags"
 	"ghtrend/pkg/ghclient"
 	"ghtrend/pkg/ui"
 	"log"
 	"os"
 	"path/filepath"
 )
+
+type App struct {
+	cfg flags.CmdConfig
+}
 
 func Run() {
 	repos := []ghclient.Repo{}
