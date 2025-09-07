@@ -1,12 +1,12 @@
 package main
 
 import (
-	"ghtrend/pkg/app"
+	"ghtrend/cmd"
 	"github.com/lpernett/godotenv"
 )
 
 
 func main(){
 	_ = godotenv.Load(".env")
-	app.Run()
+	cmd.Execute()
 }
