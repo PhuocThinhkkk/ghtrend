@@ -11,8 +11,12 @@ var baseStyle = lipgloss.NewStyle().
 	BorderForeground(lipgloss.Color("#7D56F4"))
 
 
-func RenderTable(t table.Model) string {
-	table := baseStyle.Render(t.View())
+func RenderTable(t table.Model, state activeComponent) string {
+	style := baseStyle
+	if state == tableActive {
+		style = style.BorderForeground(lipgloss.Color("#BA8E23"))
+	}
+	table := style.Render(t.View())
 	return table
 	
 }

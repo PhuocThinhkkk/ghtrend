@@ -84,9 +84,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	table := RenderTable(m.table)
+	table := RenderTable(m.table, m.active)
 	m.setFileList()
-	fileList := RenderFileList(m.list)
+	fileList := RenderFileList(m.list, m.active)
 	extra := m.renderExtraInfor()
 	language := m.renderLanguagesBreakDown()
 	poop := lipgloss.JoinVertical(lipgloss.Left, extra, language)

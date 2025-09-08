@@ -44,8 +44,12 @@ func (m *Model) setFileList() {
 	 m.list.SetItems(items)
 }
 
-func RenderFileList(m list.Model) string {
-	return docStyle.Render(m.View())
+func RenderFileList(m list.Model, state activeComponent) string {
+	style := docStyle
+	if state == listActive {
+		style = style.BorderForeground(lipgloss.Color("#BA8E23"))
+	}
+	return style.Render(m.View())
 }
 
 func InitialFileList(dirs []EntryInfor) list.Model{
