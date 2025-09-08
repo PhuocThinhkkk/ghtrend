@@ -48,10 +48,16 @@ ghtrend
 ```bash
 ghtrend
 ```
+
+**Help command:**
+```bash
+ghtrend --help
+```
+
 **Get top 5 trending Go repositories:**
 
 ```bash
-ghtrend --language go --limit 5
+ghtrend --lang go --limit 5
 ```
 **Show trending for the past week:**
 
