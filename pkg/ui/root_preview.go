@@ -22,6 +22,7 @@ func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return i.name }
 
 func (m *Model) setFileList() {
+	// Bug: new files but the len still be the len of repos[0]
 	items := []list.Item{}
 	
 	tableCursor := m.table.Cursor()
