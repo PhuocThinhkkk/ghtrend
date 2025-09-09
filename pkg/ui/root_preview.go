@@ -27,16 +27,24 @@ func (m *Model) setFileList() {
 	
 	tableCursor := m.table.Cursor()
 	dirs := m.repoList[tableCursor].RootInfor
+	widthAllowed := docStyle.GetWidth() - 7
 
 	for i := 0; i <= len(dirs) - 1 ; i++ {
+		name := ""
+		if len(dirs[i].Name) >= widthAllowed {
+			name = dirs[i].Name[:widthAllowed-3] + "..."
+		}else {
+			name = dirs[i].Name
+		}
+			
 		var newItem item
 		if dirs[i].Type == "dir" {
 			newItem = item {
-				name: "📁 " + dirs[i].Name,
+				name: "📁 " + name,
 			}
 		}else {
 			newItem = item {
-				name: dirs[i].Name,
+				name: name,
 			}
 		}
 		items = append(items, newItem)
