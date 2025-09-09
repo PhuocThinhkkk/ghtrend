@@ -70,6 +70,8 @@ func ParseRootInfo(html string) ([]EntryInfor, error) {
 		if name == "" || name == "." || name == "/" {
 			return
 		}
+		name = strings.ReplaceAll(name, "%20", " ")
+		name = strings.ReplaceAll(name, "%26", "&")
 
 		entries = append(entries, EntryInfor{
 			Type: t,
