@@ -11,7 +11,7 @@ func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
 		url += "/" + strings.ToLower(cfg.Language)
 	}
 	if cfg.Since != "daily" {
-		url += "?since=" + cfg.Language
+		url += "?since=" + string(cfg.Since)
 	}
 
 	res, err := Fetch(url)
