@@ -49,10 +49,10 @@ func (repos RepoList) loadDetails() error {
 
 		wg.Add(5)
 		go repo.loadHtmlPageTerm(errChan, &wg, signal)
+		go repo.loadReadMe(errChan, &wg, signal)
 		go repo.loadRootInfo(errChan, &wg, signal)
 		go repo.loadExtraInfo(errChan, &wg)
 		go repo.loadLanguageBreakdown(errChan, &wg, signal)
-		go repo.loadReadMe(errChan, &wg, signal)
 	}
 	wg.Wait()
 	close(errChan)
@@ -102,7 +102,12 @@ func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup, s
 func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
 	<-signal
-	readme, err := getRawGithubReadmeFile(r.Owner, r.Name)
+	readmeText, err := getReadMeHtml(r.HtmlPageTerm)
+	if err != nil {
+		errChan <- err
+		return
+	}
+	readme, err := parseReadMeHtmlIntoMarkdown(readmeText)
 	if err != nil {
 		errChan <- err
 		return

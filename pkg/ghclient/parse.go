@@ -1,12 +1,13 @@
 package ghclient
 
 import (
-	"strings"
+	"log"
 	"path"
 	"regexp"
-	"log"
 	"sort"
+	"strings"
 
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/PuerkitoBio/goquery"
 )
 
@@ -57,7 +58,7 @@ func ParseRootInfo(html string) ([]EntryInfor, error) {
 			return
 		}
 		if seen[href] {
-			return 
+			return
 		}
 		seen[href] = true
 
@@ -105,20 +106,43 @@ func ParseRootInfo(html string) ([]EntryInfor, error) {
 	return entries, nil
 }
 
+
+func getReadMeHtml(htmlPage string) (string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlPage))
+	if err != nil {
+		return "", err
+	}
+	readmeSelection := doc.Find("article.markdown-body.entry-content.container-lg")
+	if readmeSelection.Length() == 0 {
+		return "#No README found!", nil 
+	}
+
+	readmeText := readmeSelection.Text()
+	return readmeText, nil
+}
+
+func parseReadMeHtmlIntoMarkdown(readmeText string) (string, error) {
+	markdown, err := htmltomarkdown.ConvertString(readmeText)
+	if err != nil {
+		return "", err
+	}
+	return markdown, nil
+}
+
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {
 	return &Repo{
-		Owner: owner,
-		Name:  name,
-		Url:   url,
-		Description: description,
-		Language: lang,
-		Forks: forks,
-		Stars: starts,
-		ReadMe: "",
-		Index: -1,
+		Owner:              owner,
+		Name:               name,
+		Url:                url,
+		Description:        description,
+		Language:           lang,
+		Forks:              forks,
+		Stars:              starts,
+		ReadMe:             "",
+		Index:              -1,
 		LanguagesBreakDown: map[string]int{},
-		ExtraInfor: ExtraInfor{},
-		RootInfor: []EntryInfor{},
-		HtmlPageTerm: "",
+		ExtraInfor:         ExtraInfor{},
+		RootInfor:          []EntryInfor{},
+		HtmlPageTerm:       "",
 	}
 }
