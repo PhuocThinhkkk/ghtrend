@@ -5,26 +5,27 @@ import (
 )
 
 type Repo struct {
-	Index              int            `json:"index"`
-	Name               string         `json:"name"`
-	Owner              string         `json:"owner"`
-	Url                string         `json:"url"`
-	Description        string         `json:"description"`
-	Language           string         `json:"language"`
-	Stars              string         `json:"stars"`
-	Forks              string         `json:"forks"`
-	ReadMe             string         `json:"readme"`
-	RootInfor          []EntryInfor   `json:"root_infor"`
-	ExtraInfor         ExtraInfor     `json:"extra_info"`
+	Index              int               `json:"index"`
+	Name               string            `json:"name"`
+	Owner              string            `json:"owner"`
+	Url                string            `json:"url"`
+	Description        string            `json:"description"`
+	Language           string            `json:"language"`
+	Stars              string            `json:"stars"`
+	Forks              string            `json:"forks"`
+	ReadMe             string            `json:"readme"`
+	RootInfor          []EntryInfor      `json:"root_infor"`
+	ExtraInfor         ExtraInfor        `json:"extra_info"`
 	LanguagesBreakDown map[string]string `json:"language_break_down"`
-	HtmlPageTerm       string         `json:"html_page_term"`
+	HtmlPageTerm       string            `json:"html_page_term"`
 }
 
 type ExtraInfor struct {
-	Size             int16 `json:"size"`
-	Watchers         int16 `json:"watchers"`
-	OpenIssues       int16 `json:"open_issues"`
-	SubscribersCount int16 `json:"Supscribers_count"`
+	Size             int16  `json:"size"`
+	Watchers         int16  `json:"watchers"`
+	Issues           string `json:"open_issues"`
+	SubscribersCount int16  `json:"Supscribers_count"`
+	PullRequests     string `json:"pull_request"`
 }
 
 type EntryInfor struct {
@@ -39,7 +40,7 @@ func (repos RepoList) loadDetails() error {
 	errChan := make(chan error, len(repos))
 
 	for i := range repos {
-	    signal := make(chan struct{})
+		signal := make(chan struct{})
 		repo := &repos[i]
 		defer func() {
 			if repo.HtmlPageTerm != "" {

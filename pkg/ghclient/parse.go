@@ -130,8 +130,6 @@ func getReadMeHtml(htmlPage string) (string, error) {
 	return readmeHtml, nil
 }
 
-
-
 func parseReadMeHtmlIntoMarkdown(readmeText string) (string, error) {
 	markdown, err := htmltomarkdown.ConvertString(readmeText)
 	if err != nil {
@@ -140,13 +138,9 @@ func parseReadMeHtmlIntoMarkdown(readmeText string) (string, error) {
 	return markdown, nil
 }
 
-func getLanguagesBreakDown(){
+func parseLanguagesBreakDown(htmlPage string) (map[string]string, error) {
 
-}
-
-func parseLanguagesBreakDown(htmlLang string) (map[string]string, error){
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlLang))
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlPage))
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +158,31 @@ func parseLanguagesBreakDown(htmlLang string) (map[string]string, error){
 
 	return langs, nil
 
+}
+
+type IssuePr struct {
+	Issues       string
+	PullRequests string
+}
+
+func parseIssuesPr(htmlPage string) (IssuePr, error) {
+	stats := IssuePr{}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlPage))
+	if err != nil {
+		return stats, err
+	}
+
+	issuesSel := doc.Find(`a[data-tab-item="issues-tab"] span.Counter`)
+	if issuesSel.Length() > 0 {
+		stats.Issues = strings.TrimSpace(issuesSel.First().Text())
+	}
+
+	prSel := doc.Find(`a[data-tab-item="pull-requests-tab"] span.Counter`)
+	if prSel.Length() > 0 {
+		stats.PullRequests = strings.TrimSpace(prSel.First().Text())
+	}
+
+	return stats, nil
 }
 
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {

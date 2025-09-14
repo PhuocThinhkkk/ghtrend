@@ -39,7 +39,6 @@ func Fetch(url string) ([]byte, error) {
 	return body, nil
 }
 
-
 func getRawGithubReadmeFile(owner string, repoName string) (string, error) {
 	url := "https://raw.githubusercontent.com/" + owner + "/" + repoName + "/master/README.md"
 	readmeText, err := Fetch(url)
@@ -84,7 +83,6 @@ func getExtraInfor(owner string, name string) (ExtraInfor, error) {
 	info := ExtraInfor{
 		Size:             int16(contents.Size),
 		Watchers:         int16(contents.WatchersCount),
-		OpenIssues:       int16(contents.OpenIssuesCount),
 		SubscribersCount: int16(contents.SubscribersCount),
 	}
 	return info, nil

@@ -72,3 +72,31 @@ func TestParseLanguage(t *testing.T) {
 	}
 
 }
+
+func TestParseIssuePr(t *testing.T) {
+	html := `
+	<nav>
+		<a data-tab-item="issues-tab">
+			Issues
+			<span class="Counter" title="1,100">1.1k</span>
+		</a>
+		<a data-tab-item="pull-requests-tab">
+			Pull requests
+			<span class="Counter" title="184">184</span>
+		</a>
+	</nav>
+	`
+
+	stats, err := parseIssuesPr(html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if stats.Issues != "1.1k" {
+		t.Errorf("expected Issues = 1.1k, got %s", stats.Issues)
+	}
+
+	if stats.PullRequests != "184" {
+		t.Errorf("expected PullRequests = 184, got %s", stats.PullRequests)
+	}
+}
