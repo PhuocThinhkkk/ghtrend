@@ -106,20 +106,31 @@ func ParseRootInfo(html string) ([]EntryInfor, error) {
 	return entries, nil
 }
 
-
 func getReadMeHtml(htmlPage string) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlPage))
 	if err != nil {
 		return "", err
 	}
+
 	readmeSelection := doc.Find("article.markdown-body.entry-content.container-lg")
+
 	if readmeSelection.Length() == 0 {
-		return "#No README found!", nil 
+		readmeSelection = doc.Find(".markdown-body")
 	}
 
-	readmeText := readmeSelection.Text()
-	return readmeText, nil
+	if readmeSelection.Length() == 0 {
+		return "# No README found!", nil
+	}
+
+	readmeHtml, err := readmeSelection.Html()
+	if err != nil {
+		return "", err
+	}
+
+	return readmeHtml, nil
 }
+
+
 
 func parseReadMeHtmlIntoMarkdown(readmeText string) (string, error) {
 	markdown, err := htmltomarkdown.ConvertString(readmeText)
@@ -127,6 +138,31 @@ func parseReadMeHtmlIntoMarkdown(readmeText string) (string, error) {
 		return "", err
 	}
 	return markdown, nil
+}
+
+func getLanguagesBreakDown(){
+
+}
+
+func parseLanguagesBreakDown(htmlLang string) (map[string]string, error){
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlLang))
+	if err != nil {
+		return nil, err
+	}
+
+	langs := make(map[string]string)
+
+	doc.Find("li.d-inline").Each(func(i int, s *goquery.Selection) {
+		lang := s.Find("span.color-fg-default.text-bold.mr-1").Text()
+		percent := s.Find("span").Last().Text()
+
+		if lang != "" && percent != "" {
+			langs[strings.TrimSpace(lang)] = strings.TrimSpace(percent)
+		}
+	})
+
+	return langs, nil
 }
 
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {
