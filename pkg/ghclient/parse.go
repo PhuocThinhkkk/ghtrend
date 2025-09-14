@@ -163,6 +163,7 @@ func parseLanguagesBreakDown(htmlLang string) (map[string]string, error){
 	})
 
 	return langs, nil
+
 }
 
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {
@@ -176,7 +177,7 @@ func NewRepo(owner string, name string, lang string, url string, description str
 		Stars:              starts,
 		ReadMe:             "",
 		Index:              -1,
-		LanguagesBreakDown: map[string]int{},
+		LanguagesBreakDown: map[string]string{},
 		ExtraInfor:         ExtraInfor{},
 		RootInfor:          []EntryInfor{},
 		HtmlPageTerm:       "",

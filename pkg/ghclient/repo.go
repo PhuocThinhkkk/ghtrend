@@ -16,7 +16,7 @@ type Repo struct {
 	ReadMe             string         `json:"readme"`
 	RootInfor          []EntryInfor   `json:"root_infor"`
 	ExtraInfor         ExtraInfor     `json:"extra_info"`
-	LanguagesBreakDown map[string]int `json:"language_break_down"`
+	LanguagesBreakDown map[string]string `json:"language_break_down"`
 	HtmlPageTerm       string         `json:"html_page_term"`
 }
 
@@ -91,7 +91,7 @@ func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup) {
 func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
 	<-signal
-	langs, err := getLanguageBreakDown(r.Owner, r.Name)
+	langs, err := parseLanguagesBreakDown(r.HtmlPageTerm)
 	if err != nil {
 		errChan <- err
 		return

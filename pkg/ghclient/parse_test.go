@@ -1,7 +1,6 @@
 package ghclient
 
 import (
-	"ghtrend/pkg/utils"
 	"log"
 	"testing"
 )
@@ -63,15 +62,13 @@ func TestParseLanguage(t *testing.T) {
 	}
 
 	if len(langs) != len(expected) {
-		t.Logf("Expected: ")
-		utils.LogJson(expected)
-		t.Logf("Got: ")
-		utils.LogJson(langs)
+		t.Fatalf("expected %d languages, got %d", len(expected), len(langs))
 	}
 
-	for i, lang := range langs {
-		if lang != expected[i] || lang.Percent != expected[i].Percent {
-			t.Errorf("expected %+v, got %+v", expected[i], lang)
+	for k, v := range expected {
+		if langs[k] != v {
+			t.Errorf("expected %s => %s, got %s", k, v, langs[k])
 		}
 	}
+
 }
