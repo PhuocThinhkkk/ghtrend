@@ -1,10 +1,12 @@
 package ghclient
 
 import (
+	"fmt"
 	"log"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
@@ -183,6 +185,76 @@ func parseIssuesPr(htmlPage string) (IssuePr, error) {
 	}
 
 	return stats, nil
+}
+
+func ParseCommitCountFromHTML(html string) (int64, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return -1, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var commitCount string
+	doc.Find("a[href$='/commits']").Each(func(i int, s *goquery.Selection) {
+		if strings.Contains(s.Text(), "commit") {
+			commitCount = strings.TrimSpace(s.Text())
+		}
+	})
+
+	if commitCount == "" {
+		return 0, nil
+	}
+
+	num, err := getNumberOfString(commitCount)
+	if err != nil {
+		return -1, err
+	}
+
+	return num, nil
+}
+
+func parseContributorsCountFromHTML(html string) (int64, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return -1, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var contributors string
+	// Contributors link usually ends with "/contributors"
+	doc.Find("a[href$='/contributors']").Each(func(i int, s *goquery.Selection) {
+		if strings.Contains(s.Text(), "contributor") {
+			contributors = strings.TrimSpace(s.Text())
+		}
+	})
+
+	if contributors == "" {
+		return 0, nil
+	}
+	num, err := getNumberOfString(contributors)
+	if err != nil {
+		return -1, err
+	}
+
+	return num, nil
+}
+
+func getNumberOfString(numstr string) (int64, error) {
+	str := strings.Split(numstr, " ")[0]
+	total := ""
+	for i := len(str) - 1; i >= 0; i-- {
+		s := string(str[i])
+		if s == "," {
+			continue
+		}
+
+		total += s
+	}
+	num, err := strconv.ParseInt(total, 16, 64)
+	if err != nil {
+		log.Println("Error when convert str into int64")
+		return -1, err
+	}
+	return num, nil
+
 }
 
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {

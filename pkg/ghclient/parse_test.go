@@ -100,3 +100,37 @@ func TestParseIssuePr(t *testing.T) {
 		t.Errorf("expected PullRequests = 184, got %s", stats.PullRequests)
 	}
 }
+
+
+func TestGetCommitCountFromHTML(t *testing.T) {
+	html := `
+	<html>
+		<body>
+			<a href="/owner/repo/commits">1,234 commits</a>
+		</body>
+	</html>`
+	html2 := `
+	<html>
+		<body>
+			<a href="/owner/repo/commits">1,121,234 commits</a>
+		</body>
+	</html>`
+
+	commits, err := ParseCommitCountFromHTML(html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	commits2, err := ParseCommitCountFromHTML(html2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := int64(1234)
+	if commits != expected {
+		t.Errorf("expected %q, got %q", expected, commits)
+	}
+	expected2 := int64(1121234)
+	if commits != expected {
+		t.Errorf("expected %q, got %q", expected2, commits2)
+	}
+}
