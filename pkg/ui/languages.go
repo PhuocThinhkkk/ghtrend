@@ -23,7 +23,7 @@ func (m *Model) renderLanguagesBreakDown() string {
 	languageStrings := ""
 	type kv struct {
 		lang  string
-		lines int
+		lines string
 	}
 	var sortedPairs []kv
 	for k, v := range repo.LanguagesBreakDown {
@@ -37,7 +37,7 @@ func (m *Model) renderLanguagesBreakDown() string {
 	i := 0
 	for _, p := range sortedPairs {
 		i++
-		languageStrings += renderEachField(totalWidth, p.lang, fmt.Sprintf("%d", p.lines))
+		languageStrings += renderEachField(totalWidth, p.lang, fmt.Sprintf("%s", p.lines))
 		if i >= 6 {
 			languageStrings += "...\n"
 			break

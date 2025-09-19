@@ -1,8 +1,8 @@
 package ghclient
 
 import (
-	"strings"
 	"ghtrend/pkg/configs/flags"
+	"strings"
 )
 
 func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
