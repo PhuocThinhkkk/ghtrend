@@ -21,11 +21,10 @@ type Repo struct {
 }
 
 type ExtraInfor struct {
-	Size             int16  `json:"size"`
-	Watchers         int16  `json:"watchers"`
-	Issues           string `json:"open_issues"`
-	SubscribersCount int16  `json:"Supscribers_count"`
-	PullRequests     string `json:"pull_request"`
+	Issues       string `json:"open_issues"`
+	PullRequests string `json:"pull_request"`
+	Contributors int64  `json:"contributors"`
+	TotalCommits int64  `json:"total_commits"`
 }
 
 type EntryInfor struct {
@@ -80,11 +79,27 @@ func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-c
 
 func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
-	extraInfo, err := getExtraInfor(r.Owner, r.Name)
+	issues, prs, err := parseIssuesPr(r.HtmlPageTerm)
 	if err != nil {
-		r.ExtraInfor = ExtraInfor{}
 		errChan <- err
 		return
+	}
+	contributors, err := parseContributorsCountFromHTML(r.HtmlPageTerm)
+	if err != nil {
+		errChan <- err
+		return
+	}
+	commits, err := ParseCommitCountFromHTML(r.HtmlPageTerm)
+	if err != nil {
+		errChan <- err
+		return
+	}
+	
+	extraInfo := ExtraInfor{
+		Issues:       issues,
+		PullRequests: prs,
+		Contributors: contributors,
+		TotalCommits: commits,
 	}
 	r.ExtraInfor = extraInfo
 }

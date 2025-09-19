@@ -87,17 +87,17 @@ func TestParseIssuePr(t *testing.T) {
 	</nav>
 	`
 
-	stats, err := parseIssuesPr(html)
+	Issues, PullRequests, err := parseIssuesPr(html)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if stats.Issues != "1.1k" {
-		t.Errorf("expected Issues = 1.1k, got %s", stats.Issues)
+	if Issues != "1.1k" {
+		t.Errorf("expected Issues = 1.1k, got %s", Issues)
 	}
 
-	if stats.PullRequests != "184" {
-		t.Errorf("expected PullRequests = 184, got %s", stats.PullRequests)
+	if PullRequests != "184" {
+		t.Errorf("expected PullRequests = 184, got %s", PullRequests)
 	}
 }
 
@@ -127,10 +127,10 @@ func TestGetCommitCountFromHTML(t *testing.T) {
 
 	expected := int64(1234)
 	if commits != expected {
-		t.Errorf("expected %q, got %q", expected, commits)
+		t.Errorf("expected %d, got %d", expected, commits)
 	}
 	expected2 := int64(1121234)
 	if commits != expected {
-		t.Errorf("expected %q, got %q", expected2, commits2)
+		t.Errorf("expected %d, got %d", expected2, commits2)
 	}
 }

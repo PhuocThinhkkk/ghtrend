@@ -2,7 +2,6 @@ package ghclient
 
 import (
 	"encoding/json"
-	"ghtrend/pkg/types"
 	"io"
 	"log"
 	"net/http"
@@ -68,25 +67,6 @@ func getRootInfor(owner string, name string) ([]EntryInfor, error) {
 	return entries, nil
 }
 
-func getExtraInfor(owner string, name string) (ExtraInfor, error) {
-	url := "https://api.github.com/repos/" + owner + "/" + name
-	res, err := Fetch(url)
-	if err != nil {
-		return ExtraInfor{}, err
-	}
-	var contents types.GitHubRepo
-	err = json.Unmarshal(res, &contents)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	info := ExtraInfor{
-		Size:             int16(contents.Size),
-		Watchers:         int16(contents.WatchersCount),
-		SubscribersCount: int16(contents.SubscribersCount),
-	}
-	return info, nil
-}
 
 func getLanguageBreakDown(owner string, name string) (map[string]int, error) {
 	url := "https://api.github.com/repos/" + owner + "/" + name + "/languages"

@@ -22,10 +22,10 @@ func (m *Model) renderExtraInfor() string {
 	repo := m.getCursorRepo()
 
 	header := renderHeader(totalWidth, "Project Metrics")
-	watchers := renderEachField(totalWidth, "watchers:", fmt.Sprintf("%d", repo.ExtraInfor.Watchers))
-	openissues := renderEachField(totalWidth, "open issues:", fmt.Sprintf("%d", repo.ExtraInfor.OpenIssues))
-	SubscribersCount := renderEachField(totalWidth, "subscribers: ", fmt.Sprintf("%d", repo.ExtraInfor.SubscribersCount))
-	size := renderEachField(totalWidth, "size: ", fmt.Sprintf("%d",repo.ExtraInfor.Size) + "KB")
-	return extraStyle.Width(totalWidth).Render(header + size + watchers + openissues + SubscribersCount )
+	commits := renderEachField(totalWidth, "Total Commits: ", fmt.Sprintf("%d",repo.ExtraInfor.TotalCommits))
+	prs := renderEachField(totalWidth, "Pull Requests:", fmt.Sprintf("%s", repo.ExtraInfor.PullRequests))
+	issues := renderEachField(totalWidth, "Open Issues:", fmt.Sprintf("%s", repo.ExtraInfor.Issues))
+	contributors := renderEachField(totalWidth, "Contributors Count: ", fmt.Sprintf("%d", repo.ExtraInfor.Contributors))
+	return extraStyle.Width(totalWidth).Render(header + commits + prs + issues + contributors )
 
 }
