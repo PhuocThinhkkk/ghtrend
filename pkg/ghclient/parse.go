@@ -273,17 +273,75 @@ func parseContributorsCountFromHTML(html string) (int64, error) {
 	return num, nil
 }
 
+
+
+
+// parseIssuesPr parses the count shown in the UnderlineNav for Issues and Pull Requests.
+// It tries multiple selectors and fallbacks because GitHub's attributes vary (e.g. data-tab-item may have a prefix).
 func parseIssuesPr(html string) (string, string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		return "", "", err
 	}
 
-	issues := strings.TrimSpace(doc.Find(`a[data-tab-item="issues-tab"] span.Counter`).First().Text())
-	prs := strings.TrimSpace(doc.Find(`a[data-tab-item="pull-requests-tab"] span.Counter`).First().Text())
+	issueSelectors := []string{
+		"#issues-tab span.Counter",                            // anchor id -> span.Counter
+		`a[data-tab-item$="issues-tab"] span.Counter`,        // data-tab-item ends-with "issues-tab"
+		`a[id$="issues-tab"] span.Counter`,                   // anchor id ending with issues-tab
+		"span#issues-repo-tab-count",                         // direct span id used in some pages
+	}
+	prSelectors := []string{
+		"#pull-requests-tab span.Counter",
+		`a[data-tab-item$="pull-requests-tab"] span.Counter`,
+		`a[id$="pull-requests-tab"] span.Counter`,
+		"span#pull-requests-repo-tab-count",
+	}
+
+	// helper:
+	trySelectors := func(selectors []string) string {
+		for _, sel := range selectors {
+			if node := doc.Find(sel).First(); node.Length() > 0 {
+				if txt := strings.TrimSpace(node.Text()); txt != "" {
+					return txt
+				}
+				// fallback: 
+				if title, ok := node.Attr("title"); ok && strings.TrimSpace(title) != "" {
+					return strings.TrimSpace(title)
+				}
+			}
+		}
+		return ""
+	}
+
+	issues := trySelectors(issueSelectors)
+	prs := trySelectors(prSelectors)
+
+	//fallback
+	if issues == "" {
+		doc.Find("span.Counter").EachWithBreak(func(i int, s *goquery.Selection) bool {
+			txt := strings.TrimSpace(s.Text())
+			if txt != "" {
+				issues = txt
+				return false
+			}
+			return true
+		})
+	}
+	if prs == "" {
+		// try again 
+		doc.Find("span.Counter").EachWithBreak(func(i int, s *goquery.Selection) bool {
+			txt := strings.TrimSpace(s.Text())
+			if txt != "" && txt != issues { // shit
+				prs = txt
+				return false
+			}
+			return true
+		})
+	}
 
 	return issues, prs, nil
 }
+
 
 func getNumberOfString(numstr string) (int64, error) {
 	str := strings.ReplaceAll(numstr, ",", "")

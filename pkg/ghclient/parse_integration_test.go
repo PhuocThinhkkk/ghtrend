@@ -49,5 +49,6 @@ func TestIntegration_ParseGitHubRepo(t *testing.T) {
 	if prs == "" {
 		t.Errorf("Expected PRs count, got empty string")
 	}
+
 }
 
