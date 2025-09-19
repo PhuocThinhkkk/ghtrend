@@ -51,7 +51,7 @@ func (repos RepoList) loadDetails() error {
 		go repo.loadHtmlPageTerm(errChan, &wg, signal)
 		go repo.loadReadMe(errChan, &wg, signal)
 		go repo.loadRootInfo(errChan, &wg, signal)
-		go repo.loadExtraInfo(errChan, &wg)
+		go repo.loadExtraInfo(errChan, &wg, signal)
 		go repo.loadLanguageBreakdown(errChan, &wg, signal)
 	}
 	wg.Wait()
@@ -77,8 +77,9 @@ func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-c
 	r.RootInfor = rootInfo
 }
 
-func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup) {
+func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
+	<-signal
 	issues, prs, err := parseIssuesPr(r.HtmlPageTerm)
 	if err != nil {
 		errChan <- err

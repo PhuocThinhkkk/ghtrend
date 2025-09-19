@@ -7,7 +7,7 @@ import (
 )
 
 func TestIntegration_ParseGitHubRepo(t *testing.T) {
-	url := "https://github.com/golang/go"
+	url := "https://github.com/Alibaba-NLP/DeepResearch"
 
 	resp, err := Fetch(url)
 	if err != nil {
