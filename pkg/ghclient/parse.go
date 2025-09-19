@@ -162,28 +162,74 @@ func parseLanguagesBreakDown(htmlPage string) (map[string]string, error) {
 
 }
 
+// A regex that matches numbers like "63,900", "2245+", "1,234"
+var numberRE = regexp.MustCompile(`[\d,]+(?:\+)?`)
+
 func ParseCommitCountFromHTML(html string) (int64, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		return -1, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
-	// Example: <a href="/golang/go/commits"> <strong>23,456</strong> commits </a>
-	sel := doc.Find(`a[href$="/commits"]`)
+	// Example: <a href="/golang/go/commits/master/"> ... 63,900 Commits ... </a>
+	sel := doc.Find(`a[href*="/commits"]`)
 	if sel.Length() == 0 {
 		return 0, nil
 	}
 
-	text := strings.TrimSpace(sel.Text()) // e.g. "23,456 commits"
-	if text == "" {
+	var value int64
+	found := false
+
+	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
+		// Example text: "63,900 Commits"
+		txt := strings.TrimSpace(s.Text())
+
+		if n, ok := extractLastNumber(txt); ok {
+			// Example: txt = "63,900 Commits"
+			// -> regex finds ["63,900"]
+			// -> cleaned = "63900"
+			// -> parsed = 63900
+			value = n
+			found = true
+			return false 
+		}
+
+		childTxt := strings.TrimSpace(s.Find("span, strong").Text())
+		if n, ok := extractLastNumber(childTxt); ok {
+			value = n
+			found = true
+			return false
+		}
+		return true
+	})
+
+	if !found {
 		return 0, nil
 	}
+	return value, nil
+}
 
-	num, err := getNumberOfString(text)
-	if err != nil {
-		return -1, err
+func extractLastNumber(s string) (int64, bool) {
+	// Example s = "Contributors 2245+ 2231 contributors"
+	// regex -> ["2245+", "2231"]
+	matches := numberRE.FindAllString(s, -1)
+	if len(matches) == 0 {
+		return 0, false
 	}
-	return num, nil
+
+	for i := len(matches) - 1; i >= 0; i-- {
+		tok := matches[i]        // e.g. "63,900" or "2245+"
+		tok = strings.TrimSuffix(tok, "+") // remove trailing plus sign
+		tok = strings.ReplaceAll(tok, ",", "") // remove commas
+		if tok == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(tok, 10, 64)
+		if err == nil {
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 func parseContributorsCountFromHTML(html string) (int64, error) {
@@ -240,7 +286,6 @@ func parseIssuesPr(html string) (string, string, error) {
 }
 
 func getNumberOfString(numstr string) (int64, error) {
-	// "1,234 commits" -> "1,234"
 	str := strings.ReplaceAll(numstr, ",", "")
 	str = strings.TrimPrefix(str, "+")
 
