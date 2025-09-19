@@ -2,7 +2,6 @@ package ghclient
 
 import (
 	"ghtrend/pkg/configs/flags"
-	"ghtrend/pkg/utils"
 	"strings"
 )
 
@@ -26,7 +25,6 @@ func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
 	if err != nil {
 		return nil, err
 	}
-	utils.LogJson(repos)
 
 	err = repos.loadDetails()
 	if err != nil {

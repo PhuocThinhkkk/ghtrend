@@ -343,17 +343,6 @@ func parseIssuesPr(html string) (string, string, error) {
 }
 
 
-func getNumberOfString(numstr string) (int64, error) {
-	str := strings.ReplaceAll(numstr, ",", "")
-	str = strings.TrimPrefix(str, "+")
-
-	num, err := strconv.ParseInt(str, 10, 64)
-	if err != nil {
-		log.Printf("Error when converting %q into int64: %v\n", str, err)
-		return -1, err
-	}
-	return num, nil
-}
 
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {
 	return &Repo{
