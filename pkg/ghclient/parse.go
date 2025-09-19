@@ -33,7 +33,7 @@ func parseTrendingPage(html string) (RepoList, error) {
 		description := strings.TrimSpace(s.Find("p").Text())
 		lang := strings.TrimSpace(s.Find("span[itemprop='programmingLanguage']").Text())
 		stars := strings.TrimSpace(s.Find("a[href$='/stargazers']").First().Text())
-		forks := strings.TrimSpace(s.Find("a[href$='/network/members']").First().Text())
+		forks := strings.TrimSpace(s.Find("a[href$='/forks']").First().Text())
 
 		repo := NewRepo(owner, repoName, lang, "https://github.com"+url, description, forks, stars)
 		repos = append(repos, *repo)
