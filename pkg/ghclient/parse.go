@@ -2,6 +2,7 @@ package ghclient
 
 import (
 	"fmt"
+	"ghtrend/pkg/utils"
 	"log"
 	"path"
 	"regexp"
@@ -75,6 +76,7 @@ func ParseRootInfo(html string) ([]EntryInfor, error) {
 		}
 		name = strings.ReplaceAll(name, "%20", " ")
 		name = strings.ReplaceAll(name, "%26", "&")
+		name, _ = utils.DetectAndDecode(name)
 
 		entries = append(entries, EntryInfor{
 			Type: t,
@@ -191,7 +193,7 @@ func ParseCommitCountFromHTML(html string) (int64, error) {
 			// -> parsed = 63900
 			value = n
 			found = true
-			return false 
+			return false
 		}
 
 		childTxt := strings.TrimSpace(s.Find("span, strong").Text())
@@ -218,8 +220,8 @@ func extractLastNumber(s string) (int64, bool) {
 	}
 
 	for i := len(matches) - 1; i >= 0; i-- {
-		tok := matches[i]        // e.g. "63,900" or "2245+"
-		tok = strings.TrimSuffix(tok, "+") // remove trailing plus sign
+		tok := matches[i]                      // e.g. "63,900" or "2245+"
+		tok = strings.TrimSuffix(tok, "+")     // remove trailing plus sign
 		tok = strings.ReplaceAll(tok, ",", "") // remove commas
 		if tok == "" {
 			continue
@@ -273,9 +275,6 @@ func parseContributorsCountFromHTML(html string) (int64, error) {
 	return num, nil
 }
 
-
-
-
 // parseIssuesPr parses the count shown in the UnderlineNav for Issues and Pull Requests.
 // It tries multiple selectors and fallbacks because GitHub's attributes vary (e.g. data-tab-item may have a prefix).
 func parseIssuesPr(html string) (string, string, error) {
@@ -285,10 +284,10 @@ func parseIssuesPr(html string) (string, string, error) {
 	}
 
 	issueSelectors := []string{
-		"#issues-tab span.Counter",                            // anchor id -> span.Counter
-		`a[data-tab-item$="issues-tab"] span.Counter`,        // data-tab-item ends-with "issues-tab"
-		`a[id$="issues-tab"] span.Counter`,                   // anchor id ending with issues-tab
-		"span#issues-repo-tab-count",                         // direct span id used in some pages
+		"#issues-tab span.Counter",                    // anchor id -> span.Counter
+		`a[data-tab-item$="issues-tab"] span.Counter`, // data-tab-item ends-with "issues-tab"
+		`a[id$="issues-tab"] span.Counter`,            // anchor id ending with issues-tab
+		"span#issues-repo-tab-count",                  // direct span id used in some pages
 	}
 	prSelectors := []string{
 		"#pull-requests-tab span.Counter",
@@ -304,7 +303,7 @@ func parseIssuesPr(html string) (string, string, error) {
 				if txt := strings.TrimSpace(node.Text()); txt != "" {
 					return txt
 				}
-				// fallback: 
+				// fallback:
 				if title, ok := node.Attr("title"); ok && strings.TrimSpace(title) != "" {
 					return strings.TrimSpace(title)
 				}
@@ -328,7 +327,7 @@ func parseIssuesPr(html string) (string, string, error) {
 		})
 	}
 	if prs == "" {
-		// try again 
+		// try again
 		doc.Find("span.Counter").EachWithBreak(func(i int, s *goquery.Selection) bool {
 			txt := strings.TrimSpace(s.Text())
 			if txt != "" && txt != issues { // shit
@@ -341,8 +340,6 @@ func parseIssuesPr(html string) (string, string, error) {
 
 	return issues, prs, nil
 }
-
-
 
 func NewRepo(owner string, name string, lang string, url string, description string, forks string, starts string) *Repo {
 	return &Repo{
