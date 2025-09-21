@@ -1,7 +1,7 @@
 package ghclient
 
 import (
-	"ghtrend/pkg/utils"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 	"sync"
 )
 

@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"ghtrend/pkg/app"
-	"ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/app"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"os"
 
 	"github.com/spf13/cobra"

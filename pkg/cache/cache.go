@@ -3,8 +3,8 @@ package cache
 import (
 	"encoding/json"
 	"fmt"
-	"ghtrend/pkg/configs/flags"
-	"ghtrend/pkg/ghclient"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"os"
 	"path/filepath"
 	"time"

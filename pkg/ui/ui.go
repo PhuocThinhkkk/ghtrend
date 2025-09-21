@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"ghtrend/pkg/configs/flags"
-	"ghtrend/pkg/ghclient"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"log"
 	"os"
 	"fmt"

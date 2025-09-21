@@ -1,10 +1,10 @@
 package app
 
 import (
-	"ghtrend/pkg/cache"
-	"ghtrend/pkg/configs/flags"
-	"ghtrend/pkg/ghclient"
-	"ghtrend/pkg/ui"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/cache"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ui"
 	"log"
 	"os"
 	"path/filepath"

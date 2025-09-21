@@ -2,7 +2,7 @@ package ghclient
 
 import (
 	"fmt"
-	"ghtrend/pkg/utils"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 	"log"
 	"path"
 	"regexp"

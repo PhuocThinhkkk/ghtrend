@@ -4,7 +4,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"io"
 	"errors"
-	"ghtrend/pkg/utils"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 	"strings"
 	"github.com/charmbracelet/glamour"
 )

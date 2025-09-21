@@ -2,7 +2,7 @@ package integration
 
 import (
 	"encoding/json"
-	"ghtrend/pkg/ghclient"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"testing"
 )
 

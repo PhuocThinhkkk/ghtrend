@@ -1,7 +1,7 @@
 package ghclient
 
 import (
-	"ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"strings"
 )
 

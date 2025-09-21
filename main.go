@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ghtrend/cmd"
+	"github.com/PhuocThinhkkk/ghtrend/cmd"
 	"github.com/lpernett/godotenv"
 )
 
