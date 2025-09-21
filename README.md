@@ -19,24 +19,31 @@
 - Go **1.24+**
 - Git
 
-## Installation (for linux, idk how to do it on Windows )
+## Installation
 
-Clone this repository:
+### Option 1 — Install with Go (Linux, macOS, Windows)
+Make sure Go is installed, then run:
 
-```
+```bash
+go install github.com/PhuocThinhkkk/ghtrend@latest
+````
+This will build and install ghtrend into your $GOBIN (default: $HOME/go/bin).
+On Windows, it goes into %USERPROFILE%\go\bin.
+
+### Option 2 — Install via script (Linux/macOS only)
+#### Quick install (curl):
+```bash
+curl -fsSL https://raw.githubusercontent.com/PhuocThinhkkk/ghtrend/main/install.sh | bash
+````
+
+#### Manual install:
+````bash
 git clone https://github.com/PhuocThinhkkk/ghtrend.git
-```
-
-Enter the directory:
-
-```bash
 cd ghtrend
-```
-
-```bash
 chmod +x install.sh
 ./install.sh
-```
+````
+
 
 After installing, run:
 ```bash
