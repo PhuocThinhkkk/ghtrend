@@ -1,53 +1,56 @@
 package utils
 
 import (
+	"github.com/forPelevin/gomoji"
 	"regexp"
 	"strings"
 )
 
 func CleanMarkdown(input string) string {
-    clean := input
+	clean := input
 
-    reANSI := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-    clean = reANSI.ReplaceAllString(clean, "")
+	reANSI := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	clean = reANSI.ReplaceAllString(clean, "")
 
-    reImages := regexp.MustCompile(`\[!\[.*?\]\(.*?\)\]\(.*?\)|!\[.*?\]\(.*?\)`)
-    clean = reImages.ReplaceAllString(clean, "")
+	reImages := regexp.MustCompile(`\[!\[.*?\]\(.*?\)\]\(.*?\)|!\[.*?\]\(.*?\)`)
+	clean = reImages.ReplaceAllString(clean, "")
 
-    reHTML := regexp.MustCompile(`(?s)<[^>]+>`)
-    clean = reHTML.ReplaceAllString(clean, "")
+	reHTML := regexp.MustCompile(`(?s)<[^>]+>`)
+	clean = reHTML.ReplaceAllString(clean, "")
 
-    reLinks := regexp.MustCompile(`\[(.*?)\]\(.*?\)`)
-    clean = reLinks.ReplaceAllString(clean, "$1")
+	reLinks := regexp.MustCompile(`\[(.*?)\]\(.*?\)`)
+	clean = reLinks.ReplaceAllString(clean, "$1")
 
-    reTables := regexp.MustCompile(`(?m)^.*\|.*\|.*$`)
-    clean = reTables.ReplaceAllString(clean, "")
+	reTables := regexp.MustCompile(`(?m)^.*\|.*\|.*$`)
+	clean = reTables.ReplaceAllString(clean, "")
 
-    reFencedCode := regexp.MustCompile("(?s)```.*?```")
-    clean = reFencedCode.ReplaceAllString(clean, "")
+	reFencedCode := regexp.MustCompile("(?s)```.*?```")
+	clean = reFencedCode.ReplaceAllString(clean, "")
 
-    reInlineCode := regexp.MustCompile("`[^`]+`")
-    clean = reInlineCode.ReplaceAllString(clean, "")
+	reInlineCode := regexp.MustCompile("`[^`]+`")
+	clean = reInlineCode.ReplaceAllString(clean, "")
 
-    reBlockquote := regexp.MustCompile(`(?m)^\s*>.*$`)
-    clean = reBlockquote.ReplaceAllString(clean, "")
+	reBlockquote := regexp.MustCompile(`(?m)^\s*>.*$`)
+	clean = reBlockquote.ReplaceAllString(clean, "")
 
-    reHR := regexp.MustCompile(`(?m)^\s*([-*_]){3,}\s*$`)
-    clean = reHR.ReplaceAllString(clean, "")
+	reHR := regexp.MustCompile(`(?m)^\s*([-*_]){3,}\s*$`)
+	clean = reHR.ReplaceAllString(clean, "")
 
-    reEmphasis := regexp.MustCompile(`(\*\*|__|\*|_)`)
-    clean = reEmphasis.ReplaceAllString(clean, "")
+	reEmphasis := regexp.MustCompile(`(\*\*|__|\*|_)`)
+	clean = reEmphasis.ReplaceAllString(clean, "")
 
-    reFootnoteDef := regexp.MustCompile(`(?m)^\s*\[\d+\]:\s+.*$`)
-    clean = reFootnoteDef.ReplaceAllString(clean, "")
-    reFootnoteRef := regexp.MustCompile(`\[\d+\]`)
-    clean = reFootnoteRef.ReplaceAllString(clean, "")
+	reFootnoteDef := regexp.MustCompile(`(?m)^\s*\[\d+\]:\s+.*$`)
+	clean = reFootnoteDef.ReplaceAllString(clean, "")
+	reFootnoteRef := regexp.MustCompile(`\[\d+\]`)
+	clean = reFootnoteRef.ReplaceAllString(clean, "")
 
-    reMultiNewline := regexp.MustCompile(`\n{3,}`)
-    clean = reMultiNewline.ReplaceAllString(clean, "\n\n")
+	reMultiNewline := regexp.MustCompile(`\n{3,}`)
+	clean = reMultiNewline.ReplaceAllString(clean, "\n\n")
 
 	clean = normalizeNewlines(clean)
-    return clean
+	clean = removeEmoji(clean)
+	clean = removeEmojiLib(clean)
+	return clean
 }
 
 func normalizeNewlines(input string) string {
@@ -67,4 +70,14 @@ func normalizeNewlines(input string) string {
 	normalized = reMultiBlank.ReplaceAllString(normalized, "\n\n")
 
 	return normalized
+}
+
+var emojiRegex = regexp.MustCompile(`[\x{1F300}-\x{1FAD6}\x{1F600}-\x{1F64F}]`)
+
+func removeEmojiLib(s string) string {
+	return gomoji.RemoveEmojis(s)
+}
+
+func removeEmoji(s string) string {
+	return emojiRegex.ReplaceAllString(s, "")
 }

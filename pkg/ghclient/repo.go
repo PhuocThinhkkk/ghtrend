@@ -1,6 +1,7 @@
 package ghclient
 
 import (
+	"ghtrend/pkg/utils"
 	"sync"
 )
 
@@ -129,6 +130,7 @@ func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup, signal <-cha
 		errChan <- err
 		return
 	}
+	readme = utils.CleanMarkdown(readme)
 	r.ReadMe = readme
 }
 
