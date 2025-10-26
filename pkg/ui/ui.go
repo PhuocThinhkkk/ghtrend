@@ -80,12 +80,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.list, cmd = m.list.Update(msg)
 	}
+	m.setFileList()
 	return m, cmd
 }
 
 func (m Model) View() string {
 	table := RenderTable(m.table, m.active)
-	m.setFileList()
 	fileList := RenderFileList(m.list, m.active)
 	extra := m.renderExtraInfor()
 	language := m.renderLanguagesBreakDown()
