@@ -234,25 +234,93 @@ func extractLastNumber(s string) (int64, bool) {
 	return 0, false
 }
 
+// fetchContributorsFragment retrieves the async contributors fragment.
+// It's a variable (defaulting to Fetch) so tests can stub it out instead of
+// making real network calls.
+var fetchContributorsFragment = Fetch
+
+// parseContributorsCountFromHTML extracts the total contributors count from
+// a GitHub repository page. GitHub now renders the "Contributors" section
+// via a deferred <include-fragment> element, so the count is not always
+// present in the initial page HTML. When that's the case, this function
+// fetches the fragment referenced by the include-fragment's `src` and
+// extracts the count from there instead.
 func parseContributorsCountFromHTML(html string) (int64, error) {
+	num, ok, err := extractContributorsCount(html)
+	if err != nil {
+		return -1, err
+	}
+	if ok {
+		return num, nil
+	}
+
+	fragmentURL, ok := contributorsFragmentURL(html)
+	if !ok {
+		return 0, nil
+	}
+
+	fragmentHTML, err := fetchContributorsFragment(fragmentURL)
+	if err != nil {
+		return 0, nil
+	}
+
+	num, ok, err = extractContributorsCount(string(fragmentHTML))
+	if err != nil {
+		return -1, err
+	}
+	if !ok {
+		return 0, nil
+	}
+	return num, nil
+}
+
+// contributorsFragmentURL looks for a
+// <include-fragment src="...contributors_list...">, which is how GitHub
+// currently loads the contributors count asynchronously, and returns an
+// absolute URL for it.
+func contributorsFragmentURL(html string) (string, bool) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
-		return -1, fmt.Errorf("failed to parse HTML: %w", err)
+		return "", false
 	}
 
-	sel := doc.Find(`a[href$="/contributors"]`)
-	if sel.Length() == 0 {
-		return 0, nil
+	src, exists := doc.Find(`include-fragment[src*="contributors_list"]`).First().Attr("src")
+	if !exists || strings.TrimSpace(src) == "" {
+		return "", false
 	}
 
-	// Get the text inside the contributors link
-	text := strings.TrimSpace(sel.Text())
-	if text == "" {
-		return 0, nil
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		return src, true
+	}
+	if !strings.HasPrefix(src, "/") {
+		src = "/" + src
+	}
+	return "https://github.com" + src, true
+}
+
+// extractContributorsCount tries to find the contributors count within a
+// blob of HTML. It first looks for the dedicated Counter badge next to the
+// "Contributors" link (the current GitHub layout), then falls back to
+// scanning the link text for a trailing number (older layout).
+func extractContributorsCount(html string) (int64, bool, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return -1, false, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	link := doc.Find(`a[href$="/contributors"]`).First()
+	if link.Length() == 0 {
+		return 0, false, nil
+	}
+
+	if counterText := strings.TrimSpace(link.Find("span.Counter").First().Text()); counterText != "" {
+		if n, ok := parseCountToken(counterText); ok {
+			return n, true, nil
+		}
 	}
 
 	// Split by spaces and scan for the last pure number token
-	fields := strings.Fields(text)
+	fields := strings.Fields(strings.TrimSpace(link.Text()))
 	var lastNum string
 	for _, f := range fields {
 		// remove "contributors", "+", and commas
@@ -265,14 +333,30 @@ func parseContributorsCountFromHTML(html string) (int64, error) {
 	}
 
 	if lastNum == "" {
-		return 0, nil
+		return 0, false, nil
 	}
 
 	num, err := strconv.ParseInt(lastNum, 10, 64)
 	if err != nil {
-		return -1, err
+		return -1, false, err
 	}
-	return num, nil
+	return num, true, nil
+}
+
+// parseCountToken cleans up a token like "2,231" or "2245+" and parses it
+// into an int64.
+func parseCountToken(token string) (int64, bool) {
+	clean := strings.ReplaceAll(token, ",", "")
+	clean = strings.TrimSuffix(clean, "+")
+	clean = strings.TrimSpace(clean)
+	if clean == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(clean, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // parseIssuesPr parses the count shown in the UnderlineNav for Issues and Pull Requests.
