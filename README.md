@@ -5,12 +5,10 @@
 
   <p align="center">
   Explore Github trending directly from your terminal
-    <br />
-    <br />
+
   </p>
 </div>
 
-<br><br>
 
 ## Demo
 ![Demo](assets/demo.gif)
