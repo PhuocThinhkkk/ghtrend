@@ -6,12 +6,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func RenderTable(t table.Model, state activeComponent, width int, th theme.Theme) string {
+func RenderTable(t table.Model, state activeComponent, width, height int, th theme.Theme) string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(th.Border)
 	if width > 0 {
-		style = style.Width(width)
+		style = style.Width(max(10, width-2)).MaxWidth(width)
+	}
+	if height > 0 {
+		style = style.Height(max(1, height-2)).MaxHeight(height)
 	}
 	if state == tableActive {
 		style = style.BorderForeground(th.FocusBorder)
@@ -20,18 +23,19 @@ func RenderTable(t table.Model, state activeComponent, width int, th theme.Theme
 }
 
 func CalculateTableColumns(width int) []table.Column {
-	usable := width - 6
-	if usable < 40 {
-		usable = 40
+	// RoundedBorder takes 2 chars; 5 columns with 2 padding each = 10 chars. Total overhead = 12.
+	usable := width - 12
+	if usable < 30 {
+		usable = 30
 	}
 
-	ownerW := max(10, usable*20/100)
-	repoW := max(16, usable*36/100)
-	starsW := max(6, usable*12/100)
-	forksW := max(6, usable*12/100)
+	ownerW := max(8, usable*20/100)
+	repoW := max(12, usable*36/100)
+	starsW := max(5, usable*12/100)
+	forksW := max(5, usable*12/100)
 	langW := usable - (ownerW + repoW + starsW + forksW)
-	if langW < 8 {
-		langW = 8
+	if langW < 6 {
+		langW = 6
 	}
 
 	return []table.Column{
@@ -47,10 +51,11 @@ func UpdateTableDimensions(t *table.Model, width, height int) {
 	if width > 0 {
 		cols := CalculateTableColumns(width)
 		t.SetColumns(cols)
-		t.SetWidth(width)
+		t.SetWidth(max(10, width-2))
 	}
 	if height > 0 {
-		t.SetHeight(height)
+		// Table body height = box height - 4 (1 header text + 1 header bottom border + 2 outer box borders)
+		t.SetHeight(max(1, height-4))
 	}
 }
 
@@ -94,8 +99,8 @@ func InitialTable(repos []Repo, limit int, th theme.Theme) table.Model {
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(true),
-		table.WithHeight(12),
-		table.WithWidth(80),
+		table.WithHeight(7),
+		table.WithWidth(78),
 	)
 
 	ApplyThemeToTable(&t, th)

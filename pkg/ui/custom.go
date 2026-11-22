@@ -7,17 +7,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func renderEachField(totalWidth int, label string, value string) string {
-	spaceCount := totalWidth - lipgloss.Width(label) - lipgloss.Width(value) - 2
+func renderEachField(lineWidth int, label string, value string) string {
+	spaceCount := lineWidth - lipgloss.Width(label) - lipgloss.Width(value)
 	if spaceCount < 1 {
 		spaceCount = 1
 	}
 
-	s := label + strings.Repeat(" ", spaceCount) + value + "\n"
-	return s
+	return label + strings.Repeat(" ", spaceCount) + value + "\n"
 }
 
-func renderHeader(totalWidth int, header string, th theme.Theme) string {
+func renderHeader(lineWidth int, header string, th theme.Theme) string {
 	headerBgStyle := lipgloss.NewStyle().
 		Background(th.Primary).
 		Padding(0, 1)
@@ -28,10 +27,10 @@ func renderHeader(totalWidth int, header string, th theme.Theme) string {
 
 	styledHeader := headerBgStyle.Render(headerStyle.Render(header))
 
-	fillCount := totalWidth - lipgloss.Width(styledHeader) - 2
+	fillCount := lineWidth - lipgloss.Width(styledHeader)
 	fillCount = max(fillCount, 0)
 
 	fill := lipgloss.NewStyle().Foreground(th.Border).Render(strings.Repeat("─", fillCount))
 
-	return styledHeader + fill
+	return styledHeader + fill + "\n"
 }
