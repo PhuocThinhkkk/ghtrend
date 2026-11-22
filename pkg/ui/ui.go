@@ -484,7 +484,18 @@ func (m Model) renderStatusBar(width int) string {
 		Padding(0, 1).
 		Render(fmt.Sprintf("🎨 %s [t]", m.theme.ID))
 
-	tabs := lipgloss.JoinHorizontal(lipgloss.Top, tab1, tab2, tab3, " ", themePill)
+	statusItems := []string{tab1, tab2, tab3, " ", themePill}
+	if m.cfg != nil && m.cfg.User != "" {
+		userPill := lipgloss.NewStyle().
+			Foreground(m.theme.Accent).
+			Background(m.theme.Surface).
+			Bold(true).
+			Padding(0, 1).
+			Render(fmt.Sprintf("👤 @%s", m.cfg.User))
+		statusItems = append(statusItems, " ", userPill)
+	}
+
+	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render("[Tab] Cycle  [1-3] Focus  [t] Theme  [q] Quit")
 
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText) - 2

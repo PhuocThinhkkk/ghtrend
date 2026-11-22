@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -91,3 +92,22 @@ func TestModel_LoadingStateTransitions(t *testing.T) {
 		t.Errorf("expected retry to return to stateLoading, got %v", rModel.state)
 	}
 }
+
+func TestLoadingViews_UserSubtitle(t *testing.T) {
+	loading := newLoadingModel()
+	m := Model{
+		state:   stateLoading,
+		loading: loading,
+		width:   80,
+		height:  24,
+		cfg: &flags.CmdConfig{
+			User: "PhuocThinhkkk",
+		},
+	}
+
+	loadingView := m.renderLoadingView(80, 24)
+	if !strings.Contains(loadingView, "@PhuocThinhkkk") {
+		t.Errorf("expected loading view to contain user '@PhuocThinhkkk', got %q", loadingView)
+	}
+}
+

@@ -3,23 +3,27 @@ package cache
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
-	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 )
 
 type CacheData struct {
 	Timestamp int64           `json:"timestamp"`
-	Since     flags.Frequency `json:"since"`    
+	Since     flags.Frequency `json:"since"`
 	Language  string          `json:"language"`
+	User      string          `json:"user"`
 	Data      []ghclient.Repo `json:"data"`
 }
 
 func SaveCache(repos []ghclient.Repo, path string, cfg *flags.CmdConfig) error {
 	timestamp := time.Now().Unix()
-	os.MkdirAll(filepath.Dir(path), 0755)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 
 	var allCache []CacheData
 
@@ -33,12 +37,13 @@ func SaveCache(repos []ghclient.Repo, path string, cfg *flags.CmdConfig) error {
 		Timestamp: timestamp,
 		Since:     cfg.Since,
 		Language:  cfg.Language,
+		User:      cfg.User,
 		Data:      repos,
 	}
 
 	found := false
 	for i, c := range allCache {
-		if c.Since == cfg.Since && c.Language == cfg.Language {
+		if c.Since == cfg.Since && c.Language == cfg.Language && c.User == cfg.User {
 			allCache[i] = newCache
 			found = true
 			break
@@ -71,7 +76,7 @@ func LoadCache(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
 	}
 
 	for _, c := range allCache {
-		if c.Since == cfg.Since && c.Language == cfg.Language {
+		if c.Since == cfg.Since && c.Language == cfg.Language && c.User == cfg.User {
 			if time.Now().Unix()-c.Timestamp >= int64(time.Hour.Seconds()) {
 				return nil, fmt.Errorf("cache miss cause of more than 60 minutes")
 			}
@@ -79,5 +84,8 @@ func LoadCache(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
 		}
 	}
 
+	if cfg.User != "" {
+		return nil, fmt.Errorf("cache miss for user=%s and language=%s", cfg.User, cfg.Language)
+	}
 	return nil, fmt.Errorf("cache miss for since=%s and language=%s", cfg.Since, cfg.Language)
 }

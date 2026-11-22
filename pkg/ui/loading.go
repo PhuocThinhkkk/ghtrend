@@ -102,7 +102,11 @@ func tickProgress(percent float64, msg string, d time.Duration) tea.Cmd {
 
 func (m Model) renderLoadingView(width, height int) string {
 	title := loadingTitleStyle.Render("★  G H T R E N D  ★")
-	subtitle := loadingSubTitleStyle.Render("Explore GitHub Trending directly in your terminal")
+	subtitleText := "Explore GitHub Trending directly in your terminal"
+	if m.cfg != nil && m.cfg.User != "" {
+		subtitleText = fmt.Sprintf("Exploring repositories of @%s", m.cfg.User)
+	}
+	subtitle := loadingSubTitleStyle.Render(subtitleText)
 
 	status := loadingStatusStyle.Render(fmt.Sprintf("%s %s", m.loading.spinner.View(), m.loading.message))
 	progressBar := m.loading.progress.View()

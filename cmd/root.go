@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/PhuocThinhkkk/ghtrend/pkg/app"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
-	"os"
-
 	"github.com/spf13/cobra"
 )
+
 const defauleLimit = 2202
 
 var limit int
@@ -15,15 +17,16 @@ var since string
 var lang string
 var noCache bool
 var theme string
+var user string
 
 var rootCmd = &cobra.Command{
 	Use:   "ghtrend",
-	Short: "Explore GitHub Trending directly from your terminal",
+	Short: "Explore GitHub Trending and user repositories directly from your terminal",
 	Run: func(cmd *cobra.Command, args []string) {
 		useCache := true
-        if cmd.Flags().Changed("no-cache") && noCache {
-            useCache = false
-        }
+		if cmd.Flags().Changed("no-cache") && noCache {
+			useCache = false
+		}
 		fred := flags.Frequency(since)
 		cfg, err := flags.NewConfig(useCache, limit, fred, lang)
 		if err != nil {
@@ -32,6 +35,14 @@ var rootCmd = &cobra.Command{
 		}
 		if cmd.Flags().Changed("theme") {
 			cfg.Theme = theme
+		}
+		if cmd.Flags().Changed("user") {
+			trimmedUser := strings.TrimSpace(user)
+			if trimmedUser == "" {
+				fmt.Fprintln(os.Stderr, "❌ Error: username cannot be empty")
+				os.Exit(1)
+			}
+			cfg.User = trimmedUser
 		}
 		application := app.NewApp(cfg)
 		application.Start()
@@ -51,7 +62,8 @@ func Execute() {
 func init() {
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", defauleLimit, "Set the limit repos")
 	rootCmd.Flags().StringVarP(&since, "since", "r", "daily", "Date range (daily/weekly/monthly)")
-	rootCmd.Flags().StringVarP(&lang, "lang", "L", "All", "filter by programming languages")
+	rootCmd.Flags().StringVarP(&lang, "lang", "L", "All", "Filter by programming language")
 	rootCmd.Flags().BoolVar(&noCache, "no-cache", false, "Ignore cached data and fetch fresh")
 	rootCmd.Flags().StringVarP(&theme, "theme", "t", "", "Theme name (catppuccin, tokyonight, dracula, nord, gruvbox, cyberpunk, classic)")
+	rootCmd.Flags().StringVarP(&user, "user", "u", "", "Fetch and display repositories of a specific GitHub user")
 }

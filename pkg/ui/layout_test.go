@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -149,5 +150,13 @@ func TestModel_RecalculateLayout(t *testing.T) {
 	}
 	if em.theme.ID != theme.Catalog[1].ID {
 		t.Errorf("expected theme to change to %s, got %s", theme.Catalog[1].ID, em.theme.ID)
+	}
+
+	// Test user pill in status bar
+	m.cfg = &flags.CmdConfig{User: "torvalds"}
+	m.active = tableActive
+	bar := m.renderStatusBar(100)
+	if !strings.Contains(bar, "@torvalds") {
+		t.Errorf("expected status bar to contain '@torvalds', got %q", bar)
 	}
 }
