@@ -102,6 +102,31 @@ func TestParseIssuePr(t *testing.T) {
 	}
 }
 
+func TestParseIssuePr_NoCounterLabels(t *testing.T) {
+	html := `
+	<nav>
+		<a data-tab-item="issues" href="/owner/repo/issues">
+			Issues
+		</a>
+		<a data-tab-item="pull-requests" href="/owner/repo/pulls">
+			Pull requests
+		</a>
+	</nav>
+	`
+
+	issues, prs, err := parseIssuesPr(html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if issues != "" {
+		t.Errorf("expected empty issues when no counter is present, got %q", issues)
+	}
+	if prs != "" {
+		t.Errorf("expected empty prs when no counter is present, got %q", prs)
+	}
+}
+
 
 func TestGetCommitCountFromHTML(t *testing.T) {
 	html := `

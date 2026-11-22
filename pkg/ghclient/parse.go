@@ -394,7 +394,6 @@ func parseIssuesPr(html string) (string, string, error) {
 		`a[data-tab-item$="issues-tab"] span.Counter`, // data-tab-item ends-with "issues-tab"
 		`a[id$="issues-tab"] span.Counter`,            // anchor id ending with issues-tab
 		"span#issues-repo-tab-count",                  // direct span id used in some pages
-		`a[data-tab-item="issues"]`,
 	}
 	prSelectors := []string{
 		`a[data-tab-item="pull-requests"] [data-component="CounterLabel"]`,
@@ -405,7 +404,6 @@ func parseIssuesPr(html string) (string, string, error) {
 		`a[data-tab-item$="pull-requests-tab"] span.Counter`,
 		`a[id$="pull-requests-tab"] span.Counter`,
 		"span#pull-requests-repo-tab-count",
-		`a[data-tab-item="pull-requests"]`,
 	}
 
 	// helper:
@@ -413,19 +411,19 @@ func parseIssuesPr(html string) (string, string, error) {
 		for _, sel := range selectors {
 			if node := doc.Find(sel).First(); node.Length() > 0 {
 				if counter := node.Find(`[data-component="CounterLabel"]`).First(); counter.Length() > 0 {
-					if txt := strings.TrimSpace(counter.Text()); txt != "" {
+					if txt := strings.TrimSpace(counter.Text()); txt != "" && strings.ContainsAny(txt, "0123456789") {
 						return txt
 					}
 				}
 				if counter := node.Find(`span.Counter`).First(); counter.Length() > 0 {
-					if txt := strings.TrimSpace(counter.Text()); txt != "" {
+					if txt := strings.TrimSpace(counter.Text()); txt != "" && strings.ContainsAny(txt, "0123456789") {
 						return txt
 					}
 				}
-				if txt := strings.TrimSpace(node.Text()); txt != "" {
+				if txt := strings.TrimSpace(node.Text()); txt != "" && strings.ContainsAny(txt, "0123456789") {
 					return txt
 				}
-				if title, ok := node.Attr("title"); ok && strings.TrimSpace(title) != "" {
+				if title, ok := node.Attr("title"); ok && strings.TrimSpace(title) != "" && strings.ContainsAny(title, "0123456789") {
 					return strings.TrimSpace(title)
 				}
 			}
@@ -438,9 +436,9 @@ func parseIssuesPr(html string) (string, string, error) {
 
 	//fallback
 	if issues == "" {
-		doc.Find("span.Counter").EachWithBreak(func(i int, s *goquery.Selection) bool {
+		doc.Find("span.Counter, [data-component='CounterLabel']").EachWithBreak(func(i int, s *goquery.Selection) bool {
 			txt := strings.TrimSpace(s.Text())
-			if txt != "" {
+			if txt != "" && strings.ContainsAny(txt, "0123456789") {
 				issues = txt
 				return false
 			}
@@ -449,9 +447,9 @@ func parseIssuesPr(html string) (string, string, error) {
 	}
 	if prs == "" {
 		// try again
-		doc.Find("span.Counter").EachWithBreak(func(i int, s *goquery.Selection) bool {
+		doc.Find("span.Counter, [data-component='CounterLabel']").EachWithBreak(func(i int, s *goquery.Selection) bool {
 			txt := strings.TrimSpace(s.Text())
-			if txt != "" && txt != issues {
+			if txt != "" && txt != issues && strings.ContainsAny(txt, "0123456789") {
 				prs = txt
 				return false
 			}
