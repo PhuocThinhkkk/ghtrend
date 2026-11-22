@@ -394,10 +394,18 @@ func (m Model) View() string {
 func (m Model) renderTooSmallView(width, height int) string {
 	if height < 6 || width < 25 {
 		msg := "Window too small"
-		if height > 1 && width >= 10 {
-			msg += "\nMin: 60x14"
+		if width < 16 {
+			msg = "Too small"
 		}
-		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, msg)
+		if height > 1 && width >= 10 {
+			line2 := "Min: 60x14"
+			if len(line2) > width {
+				line2 = line2[:width]
+			}
+			msg += "\n" + line2
+		}
+		styled := lipgloss.NewStyle().MaxWidth(width).MaxHeight(height).Render(msg)
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, styled)
 	}
 
 	title := lipgloss.NewStyle().

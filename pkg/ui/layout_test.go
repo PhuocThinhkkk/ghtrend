@@ -343,13 +343,17 @@ func TestView_TooSmallWindow(t *testing.T) {
 		}
 
 		v := m.View()
-		if !strings.Contains(v, "Window Too Small") && !strings.Contains(v, "Window too small") {
+		if !strings.Contains(v, "Window Too Small") && !strings.Contains(v, "Window too small") && !strings.Contains(v, "Too small") {
 			t.Errorf("Size=%dx%d: expected view to contain 'Window Too Small' notice, got %q", w, h, v)
 		}
 
 		actualH := lipgloss.Height(v)
 		if actualH > h {
 			t.Errorf("Size=%dx%d: view height %d exceeds terminal height %d", w, h, actualH, h)
+		}
+		actualW := lipgloss.Width(v)
+		if actualW > w {
+			t.Errorf("Size=%dx%d: view width %d exceeds terminal width %d", w, h, actualW, w)
 		}
 	}
 }
