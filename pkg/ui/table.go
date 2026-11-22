@@ -1,22 +1,20 @@
 package ui
 
 import (
+	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 )
 
-var baseStyle = lipgloss.NewStyle().
-	BorderStyle(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("#7D56F4"))
-
-
-func RenderTable(t table.Model, state activeComponent, width int) string {
-	style := baseStyle
+func RenderTable(t table.Model, state activeComponent, width int, th theme.Theme) string {
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(th.Border)
 	if width > 0 {
 		style = style.Width(width)
 	}
 	if state == tableActive {
-		style = style.BorderForeground(lipgloss.Color("#BA8E23"))
+		style = style.BorderForeground(th.FocusBorder)
 	}
 	return style.Render(t.View())
 }
@@ -56,7 +54,25 @@ func UpdateTableDimensions(t *table.Model, width, height int) {
 	}
 }
 
-func InitialTable(repos []Repo, limit int) table.Model {
+func ApplyThemeToTable(t *table.Model, th theme.Theme) {
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(th.Border).
+		Foreground(th.Text).
+		Background(th.Surface).
+		BorderBottom(true).
+		Bold(true)
+
+	s.Selected = s.Selected.
+		Foreground(th.Background).
+		Background(th.Primary).
+		Bold(true)
+
+	t.SetStyles(s)
+}
+
+func InitialTable(repos []Repo, limit int, th theme.Theme) table.Model {
 	columns := CalculateTableColumns(80)
 	var rows []table.Row
 
@@ -82,21 +98,6 @@ func InitialTable(repos []Repo, limit int) table.Model {
 		table.WithWidth(80),
 	)
 
-	s := table.DefaultStyles()
-	s.Header = s.Header.
-	BorderStyle(lipgloss.NormalBorder()).
-	BorderForeground(lipgloss.Color("60")).
-	Foreground(lipgloss.Color("183")).    
-	Background(lipgloss.Color("54")).    
-	BorderBottom(true).
-	Bold(true)
-
-	s.Selected = s.Selected.
-	Foreground(lipgloss.Color("16")).   
-	Background(lipgloss.Color("99")).  
-	Bold(true)
-
-	t.SetStyles(s)
+	ApplyThemeToTable(&t, th)
 	return t
-
 }

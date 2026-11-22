@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
 var docStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder(), true).
-	BorderForeground(lipgloss.Color("63")) 
+	BorderForeground(lipgloss.Color("63"))
 
 type item struct {
 	name string
@@ -22,7 +24,7 @@ func (i item) FilterValue() string { return i.name }
 
 func (m *Model) setFileList() {
 	items := []list.Item{}
-	
+
 	tableCursor := m.table.Cursor()
 	if tableCursor < 0 || tableCursor >= len(m.repoList) {
 		return
@@ -33,7 +35,7 @@ func (m *Model) setFileList() {
 		widthAllowed = 25
 	}
 
-	for i := 0; i <= len(dirs) - 1 ; i++ {
+	for i := 0; i <= len(dirs)-1; i++ {
 		name := ""
 		if len(dirs[i].Name) >= widthAllowed {
 			if widthAllowed > 3 {
@@ -44,14 +46,14 @@ func (m *Model) setFileList() {
 		} else {
 			name = dirs[i].Name
 		}
-			
+
 		var newItem item
 		if dirs[i].Type == "dir" {
-			newItem = item {
+			newItem = item{
 				name: "📁 " + name,
 			}
 		} else {
-			newItem = item {
+			newItem = item{
 				name: "📄 " + name,
 			}
 		}
@@ -61,8 +63,8 @@ func (m *Model) setFileList() {
 	m.list.SetItems(items)
 }
 
-func RenderFileList(m list.Model, state activeComponent, width, height int) string {
-	style := docStyle
+func RenderFileList(m list.Model, state activeComponent, width, height int, th theme.Theme) string {
+	style := docStyle.BorderForeground(th.Border)
 	if width > 0 {
 		style = style.Width(width)
 	}
@@ -70,22 +72,22 @@ func RenderFileList(m list.Model, state activeComponent, width, height int) stri
 		style = style.Height(height)
 	}
 	if state == listActive {
-		style = style.BorderForeground(lipgloss.Color("#BA8E23"))
+		style = style.BorderForeground(th.FocusBorder)
 	}
 	return style.Render(m.View())
 }
 
-func InitialFileList(dirs []EntryInfor) list.Model{
+func InitialFileList(dirs []EntryInfor) list.Model {
 	items := []list.Item{}
 
-	for i := 0; i <= len(dirs) - 1 ; i++ {
+	for i := 0; i <= len(dirs)-1; i++ {
 		var newItem item
 		if dirs[i].Type == "dir" {
-			newItem = item {
+			newItem = item{
 				name: "📁 " + dirs[i].Name,
 			}
 		} else {
-			newItem = item {
+			newItem = item{
 				name: "📄 " + dirs[i].Name,
 			}
 		}
@@ -104,28 +106,24 @@ func InitialFileList(dirs []EntryInfor) list.Model{
 	return m
 }
 
-
-
-
 type simpleDelegate struct{}
 
-func (d simpleDelegate) Height() int                           { return 1 }
-func (d simpleDelegate) Spacing() int                          { return 0 }
+func (d simpleDelegate) Height() int                               { return 1 }
+func (d simpleDelegate) Spacing() int                              { return 0 }
 func (d simpleDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
 func (d simpleDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-    i, ok := listItem.(item)
-    if !ok {
-        return
-    }
+	i, ok := listItem.(item)
+	if !ok {
+		return
+	}
 
-    str := i.Title()
+	str := i.Title()
 
-    if index == m.Index() {
-        str = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render("  " + str)
-    } else {
-        str = "  " + str
-    }
+	if index == m.Index() {
+		str = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render("  " + str)
+	} else {
+		str = "  " + str
+	}
 
-    fmt.Fprint(w, str)
+	fmt.Fprint(w, str)
 }
-

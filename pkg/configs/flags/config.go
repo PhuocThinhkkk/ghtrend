@@ -24,17 +24,19 @@ func IsValidFrequency(f Frequency) bool {
 
 type CmdConfig struct {
 	IsCache  bool
-	Limit int
-	Since Frequency
+	Limit    int
+	Since    Frequency
 	Language string
+	Theme    string
 }
 
 func NewConfig(cache bool, limit int, since Frequency, language string) (*CmdConfig, error){
 	config := &CmdConfig{
-		IsCache: cache,
-		Limit: limit,
-		Since: since,
+		IsCache:  cache,
+		Limit:    limit,
+		Since:    since,
 		Language: language,
+		Theme:    "",
 	}
 	if !IsValidFrequency(since) {
 		return config, fmt.Errorf("invalid since value: since have to be one of these 'daily', 'weekly' or 'monthly'")

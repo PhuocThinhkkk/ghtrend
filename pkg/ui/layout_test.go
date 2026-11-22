@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestCalculateTableColumns(t *testing.T) {
@@ -31,6 +33,7 @@ func TestCalculateTableColumns(t *testing.T) {
 }
 
 func TestRenderEachField_SafePadding(t *testing.T) {
+	th := theme.Catalog[0]
 	// Must not panic even when totalWidth is smaller than label + value
 	out := renderEachField(10, "A Very Long Label Name", "123456789")
 	if !strings.Contains(out, "A Very Long Label Name") || !strings.Contains(out, "123456789") {
@@ -41,6 +44,11 @@ func TestRenderEachField_SafePadding(t *testing.T) {
 	normal := renderEachField(50, "Commits", "100")
 	if !strings.Contains(normal, "Commits") || !strings.Contains(normal, "100") {
 		t.Errorf("expected output to contain label and value, got %q", normal)
+	}
+
+	header := renderHeader(50, "Metrics", th)
+	if !strings.Contains(header, "Metrics") {
+		t.Errorf("expected header to contain Metrics, got %q", header)
 	}
 }
 
@@ -70,11 +78,14 @@ func TestModel_RecalculateLayout(t *testing.T) {
 		},
 	}
 
-	tbl := InitialTable(repos, 10)
+	th := theme.Catalog[0]
+	tbl := InitialTable(repos, 10, th)
 	lst := InitialFileList(repos[0].RootInfor)
 	vp := viewport.New(60, 20)
 
 	m := Model{
+		state:    stateDashboard,
+		theme:    th,
 		table:    tbl,
 		list:     lst,
 		repoList: repos,
@@ -109,5 +120,34 @@ func TestModel_RecalculateLayout(t *testing.T) {
 	readmeView := m.View()
 	if len(readmeView) == 0 {
 		t.Errorf("readmeView should not be empty")
+	}
+
+	// Test Theme Modal interaction
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	tm := updated.(Model)
+	if !tm.showThemeModal {
+		t.Errorf("expected theme modal to be open")
+	}
+
+	modalView := tm.View()
+	if !strings.Contains(modalView, "SELECT THEME") {
+		t.Errorf("expected modal view to contain title, got %q", modalView)
+	}
+
+	// Test navigation in modal
+	downUpdated, _ := tm.Update(tea.KeyMsg{Type: tea.KeyDown})
+	dm := downUpdated.(Model)
+	if dm.themeIndex != 1 {
+		t.Errorf("expected themeIndex 1 after down key, got %d", dm.themeIndex)
+	}
+
+	// Test enter to select
+	enterUpdated, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	em := enterUpdated.(Model)
+	if em.showThemeModal {
+		t.Errorf("expected modal to close after Enter")
+	}
+	if em.theme.ID != theme.Catalog[1].ID {
+		t.Errorf("expected theme to change to %s, got %s", theme.Catalog[1].ID, em.theme.ID)
 	}
 }
