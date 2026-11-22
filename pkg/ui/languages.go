@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -15,10 +14,11 @@ var (
 		Padding(0,1)
 )
 
-func (m *Model) renderLanguagesBreakDown() string {
-	//totalWidth := m.table.Width() - m.list.Width()
-	totalWidth := 48
-	header := renderHeader(totalWidth, "Languages BreakDown")
+func (m *Model) renderLanguagesBreakDown(totalWidth int) string {
+	if totalWidth <= 0 {
+		totalWidth = 44
+	}
+	header := renderHeader(totalWidth, "Languages Breakdown")
 	repo := m.getCursorRepo()
 	languageStrings := ""
 	type kv struct {
@@ -34,21 +34,20 @@ func (m *Model) renderLanguagesBreakDown() string {
 		return sortedPairs[i].lines > sortedPairs[j].lines
 	})
 
+	maxRows := 5
 	i := 0
 	for _, p := range sortedPairs {
 		i++
 		languageStrings += renderEachField(totalWidth, p.lang, fmt.Sprintf("%s", p.lines))
-		if i >= 6 {
-			languageStrings += "...\n"
+		if i >= maxRows {
+			if len(sortedPairs) > maxRows {
+				languageStrings += "...\n"
+			}
 			break
 		}
 	}
 	if i == 0 {
-		languageStrings += "..."
-	}
-	if i < 6 {
-		languageStrings += strings.Repeat("\n", 7-i)
+		languageStrings += renderEachField(totalWidth, "None", "0%")
 	}
 	return languagesBorderStyle.Width(totalWidth).Render(header + languageStrings)
-
 }

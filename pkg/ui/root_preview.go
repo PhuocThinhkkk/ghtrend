@@ -9,9 +9,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 var docStyle = lipgloss.NewStyle().
-	Width(35).
-    Border(lipgloss.NormalBorder(), true).
-    BorderForeground(lipgloss.Color("63")) 
+	Border(lipgloss.NormalBorder(), true).
+	BorderForeground(lipgloss.Color("63")) 
 
 type item struct {
 	name string
@@ -22,18 +21,27 @@ func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return i.name }
 
 func (m *Model) setFileList() {
-	// Bug: new files but the len still be the len of repos[0]
 	items := []list.Item{}
 	
 	tableCursor := m.table.Cursor()
+	if tableCursor < 0 || tableCursor >= len(m.repoList) {
+		return
+	}
 	dirs := m.repoList[tableCursor].RootInfor
-	widthAllowed := docStyle.GetWidth() - 7
+	widthAllowed := m.list.Width() - 7
+	if widthAllowed <= 0 {
+		widthAllowed = 25
+	}
 
 	for i := 0; i <= len(dirs) - 1 ; i++ {
 		name := ""
 		if len(dirs[i].Name) >= widthAllowed {
-			name = dirs[i].Name[:widthAllowed-3] + "..."
-		}else {
+			if widthAllowed > 3 {
+				name = dirs[i].Name[:widthAllowed-3] + "..."
+			} else {
+				name = dirs[i].Name
+			}
+		} else {
 			name = dirs[i].Name
 		}
 			
@@ -42,19 +50,25 @@ func (m *Model) setFileList() {
 			newItem = item {
 				name: "📁 " + name,
 			}
-		}else {
+		} else {
 			newItem = item {
-				name: name,
+				name: "📄 " + name,
 			}
 		}
 		items = append(items, newItem)
 
 	}
-	 m.list.SetItems(items)
+	m.list.SetItems(items)
 }
 
-func RenderFileList(m list.Model, state activeComponent) string {
+func RenderFileList(m list.Model, state activeComponent, width, height int) string {
 	style := docStyle
+	if width > 0 {
+		style = style.Width(width)
+	}
+	if height > 0 {
+		style = style.Height(height)
+	}
 	if state == listActive {
 		style = style.BorderForeground(lipgloss.Color("#BA8E23"))
 	}
@@ -70,26 +84,18 @@ func InitialFileList(dirs []EntryInfor) list.Model{
 			newItem = item {
 				name: "📁 " + dirs[i].Name,
 			}
-		}else {
+		} else {
 			newItem = item {
-				name: dirs[i].Name,
+				name: "📄 " + dirs[i].Name,
 			}
 		}
 
 		items = append(items, newItem)
 
 	}
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-	Foreground(lipgloss.Color("229")). 
-	Background(lipgloss.Color("57")).   
-	Height(1)
 
-	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-	Foreground(lipgloss.Color("229"))
-
-	m :=  list.New(items, simpleDelegate{}, 20, 17)
-	m.Title = "File Preview: "
+	m := list.New(items, simpleDelegate{}, 35, 14)
+	m.Title = "File Preview:"
 	m.SetFilteringEnabled(false)
 	m.SetShowHelp(false)
 	m.SetShowStatusBar(false)

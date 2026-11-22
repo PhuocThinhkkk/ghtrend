@@ -36,38 +36,47 @@ var (
 	)
 )
 
-func RenderReadme(markdown string) (string, error) {
-	header := headerStyle.Render("Readme Preview: ")
+func RenderReadme(markdown string, width, height int, state activeComponent) (string, error) {
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+
+	header := headerStyle.Render("Readme Preview:")
 
 	if len(strings.TrimSpace(markdown)) == 0 {
 		markdown = "_No README found._"
 	} else {
 		markdown = utils.CleanMarkdown(markdown)
-
-		maxLines := 22
-		lines := strings.Split(markdown, "\n")
-		inx := 0
-		countLine := 0
-		for countLine <= maxLines {
-			if(len(lines) <= inx ) {
-				break
-			}
-			countLine += len(lines[inx])/90 + 1
-			inx++
-		}
-		lines = append(lines[:(inx - 1)], "...") 
-		markdown = strings.Join(lines, "\n")
-
 	}
 
+	wrapWidth := width - 6
+	if wrapWidth < 20 {
+		wrapWidth = 20
+	}
 
-	body, err := renderer.Render(markdown)
+	termRenderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(wrapWidth),
+		glamour.WithPreservedNewLines(),
+	)
+	if err != nil {
+		termRenderer = renderer
+	}
+
+	body, err := termRenderer.Render(markdown)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body)
-	right := contentStyle.Render(content)
-	out := borderStyle.Render(right)
+	style := contentStyle.Width(width - 4).Height(height - 2).MaxHeight(height - 2)
+	bStyle := borderStyle
+	if state == readmeActive {
+		bStyle = bStyle.BorderForeground(lipgloss.Color("#BA8E23"))
+	}
+	out := bStyle.Render(style.Render(content))
 	return out, nil
 }

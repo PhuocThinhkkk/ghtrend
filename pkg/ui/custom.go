@@ -7,12 +7,14 @@ import (
 )
 
 
-func renderEachField (totalWidth int, label string, value string ) string {
+func renderEachField(totalWidth int, label string, value string) string {
 	spaceCount := totalWidth - lipgloss.Width(label) - lipgloss.Width(value) - 2
+	if spaceCount < 1 {
+		spaceCount = 1
+	}
 
 	s := label + strings.Repeat(" ", spaceCount) + value + "\n"
 	return s
-
 }
 
 func renderHeader(totalWidth int, header string) string {
