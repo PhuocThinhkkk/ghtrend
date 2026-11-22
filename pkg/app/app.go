@@ -1,13 +1,14 @@
 package app
 
 import (
+	"log"
+	"os"
+	"path/filepath"
+
 	"github.com/PhuocThinhkkk/ghtrend/pkg/cache"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ui"
-	"log"
-	"os"
-	"path/filepath"
 )
 
 type App struct {
@@ -40,11 +41,17 @@ func (app *App) Start() {
 	}
 }
 
+func fetchRepos(cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
+	if cfg.User != "" {
+		return ghclient.GetUserRepositories(cfg)
+	}
+	return ghclient.GetAllTrendingRepos(cfg)
+}
+
 func cacheFetcher(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
 	cacheRepos, err := cache.LoadCache(path, cfg)
-
 	if err != nil {
-		repos, err := ghclient.GetAllTrendingRepos(cfg)
+		repos, err := fetchRepos(cfg)
 		if err != nil {
 			return []ghclient.Repo{}, err
 		}
@@ -56,11 +63,10 @@ func cacheFetcher(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
 		return repos, nil
 	}
 	return cacheRepos, nil
-
 }
 
 func noCacheFetcher(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
-	repos, err := ghclient.GetAllTrendingRepos(cfg)
+	repos, err := fetchRepos(cfg)
 	if err != nil {
 		return []ghclient.Repo{}, err
 	}

@@ -1,6 +1,7 @@
 package ghclient
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -30,6 +31,10 @@ func Fetch(url string) ([]byte, error) {
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP request failed with status code %d", res.StatusCode)
+	}
+
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
@@ -37,5 +42,3 @@ func Fetch(url string) ([]byte, error) {
 
 	return body, nil
 }
-
-

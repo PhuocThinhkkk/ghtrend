@@ -477,3 +477,67 @@ func NewRepo(owner string, name string, lang string, url string, description str
 		HtmlPageTerm:       "",
 	}
 }
+
+// ParseUserRepositoriesPage parses repositories from a user's repositories tab (https://github.com/<user>?tab=repositories).
+func ParseUserRepositoriesPage(html string) (RepoList, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil, fmt.Errorf("error when parsing html: %w", err)
+	}
+
+	var repos RepoList
+
+	items := doc.Find("#user-repositories-list li[itemprop='owns']")
+	if items.Length() == 0 {
+		items = doc.Find("#user-repositories-list > ul > li")
+	}
+	if items.Length() == 0 {
+		items = doc.Find("li[itemprop='owns']")
+	}
+	if items.Length() == 0 {
+		items = doc.Find("#user-repositories-list li")
+	}
+
+	items.Each(func(i int, s *goquery.Selection) {
+		linkSel := s.Find("a[itemprop='name codeRepository']").First()
+		if linkSel.Length() == 0 {
+			linkSel = s.Find("h3 a").First()
+		}
+		if linkSel.Length() == 0 {
+			return
+		}
+
+		rawRepoName := strings.TrimSpace(linkSel.Text())
+		href, exists := linkSel.Attr("href")
+		if !exists || href == "" {
+			return
+		}
+
+		cleanHref := strings.Trim(href, "/")
+		parts := strings.Split(cleanHref, "/")
+		owner := ""
+		repoName := rawRepoName
+		if len(parts) >= 2 {
+			owner = parts[0]
+			repoName = parts[1]
+		} else if len(parts) == 1 {
+			owner = parts[0]
+		}
+
+		url := "https://github.com/" + cleanHref
+		desc := strings.TrimSpace(s.Find("p[itemprop='description']").First().Text())
+		if desc == "" {
+			desc = strings.TrimSpace(s.Find("p").First().Text())
+		}
+
+		lang := strings.TrimSpace(s.Find("span[itemprop='programmingLanguage']").First().Text())
+		stars := strings.TrimSpace(s.Find("a[href$='/stargazers']").First().Text())
+		forks := strings.TrimSpace(s.Find("a[href$='/forks'], a[href$='/network/members']").First().Text())
+
+		repo := NewRepo(owner, repoName, lang, url, desc, forks, stars)
+		repos = append(repos, *repo)
+	})
+
+	return repos, nil
+}
+
