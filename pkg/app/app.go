@@ -21,30 +21,23 @@ func NewApp(cfg *flags.CmdConfig) *App {
 }
 
 func (app *App) Start() {
-	repos := []ghclient.Repo{}
-
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		log.Fatal("cant get the cache dir:", err)
 	}
 	cachePath := filepath.Join(cacheDir, "ghtrend", "cachedata.json")
-	var error error
-	if app.cfg.IsCache {
-		repos, error = cacheFetcher(cachePath, app.cfg)
-	} else {
-		repos, error = noCacheFetcher(cachePath, app.cfg)
-	}
-	if error != nil {
-		log.Fatal(err)
+
+	fetcher := func() ([]ghclient.Repo, error) {
+		if app.cfg.IsCache {
+			return cacheFetcher(cachePath, app.cfg)
+		}
+		return noCacheFetcher(cachePath, app.cfg)
 	}
 
-	program, err := ui.Render(app.cfg, repos)
+	_, err = ui.RenderWithLoading(app.cfg, fetcher)
 	if err != nil {
 		log.Fatal("err when render: ", err)
 	}
-
-	_ = program
-
 }
 
 func cacheFetcher(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
