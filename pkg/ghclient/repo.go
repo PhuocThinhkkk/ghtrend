@@ -1,10 +1,94 @@
 package ghclient
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 )
+
+var (
+	githubAPIBaseURL  = "https://api.github.com"
+	cachedGHToken     string
+	cachedGHTokenOnce sync.Once
+
+	apiHTTPClient = &http.Client{
+		Timeout: 5 * time.Second,
+	}
+)
+
+func getGitHubAuthToken() string {
+	cachedGHTokenOnce.Do(func() {
+		if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+			cachedGHToken = token
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if tokenBytes, err := exec.CommandContext(ctx, "gh", "auth", "token").Output(); err == nil {
+			cachedGHToken = strings.TrimSpace(string(tokenBytes))
+		}
+	})
+	return cachedGHToken
+}
+
+func fetchLanguagesFromAPI(owner, repo string) (map[string]string, error) {
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("invalid owner or repo")
+	}
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/languages", githubAPIBaseURL, url.PathEscape(owner), url.PathEscape(repo))
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "ghtrend")
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	if token := getGitHubAuthToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := apiHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("github api status %d", resp.StatusCode)
+	}
+
+	var byteCounts map[string]int64
+	if err := json.NewDecoder(resp.Body).Decode(&byteCounts); err != nil {
+		return nil, err
+	}
+
+	var total int64
+	for _, count := range byteCounts {
+		total += count
+	}
+	if total == 0 {
+		return nil, nil
+	}
+
+	result := make(map[string]string, len(byteCounts))
+	for lang, count := range byteCounts {
+		pct := float64(count) / float64(total) * 100.0
+		result[lang] = fmt.Sprintf("%.1f%%", pct)
+	}
+	return result, nil
+}
 
 type Repo struct {
 	Index              int               `json:"index"`
@@ -123,15 +207,31 @@ func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-
 func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
 	<-signal
-	if r.HtmlPageTerm == "" {
-		return
+
+	if r.HtmlPageTerm != "" {
+		langs, err := parseLanguagesBreakDown(r.HtmlPageTerm)
+		if err == nil && len(langs) > 0 {
+			r.LanguagesBreakDown = langs
+			return
+		}
 	}
-	langs, err := parseLanguagesBreakDown(r.HtmlPageTerm)
-	if err != nil {
-		sendErrorNonBlocking(errChan, err)
-		return
+
+	// Modern GitHub SSR renders Languages asynchronously (SkeletonText).
+	// Query GitHub API for language byte breakdown.
+	if r.Owner != "" && r.Name != "" {
+		apiLangs, err := fetchLanguagesFromAPI(r.Owner, r.Name)
+		if err == nil && len(apiLangs) > 0 {
+			r.LanguagesBreakDown = apiLangs
+			return
+		}
 	}
-	r.LanguagesBreakDown = langs
+
+	// Resilient fallback: use the primary language discovered from trending / user repo list
+	if r.Language != "" {
+		r.LanguagesBreakDown = map[string]string{
+			r.Language: "100%",
+		}
+	}
 }
 
 func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {

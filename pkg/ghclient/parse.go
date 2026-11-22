@@ -151,25 +151,26 @@ func parseReadMeHtmlIntoMarkdown(readmeText string) (string, error) {
 }
 
 func parseLanguagesBreakDown(htmlPage string) (map[string]string, error) {
-
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlPage))
 	if err != nil {
 		return nil, err
 	}
 
 	langs := make(map[string]string)
-
-	doc.Find("li.d-inline").Each(func(i int, s *goquery.Selection) {
-		lang := s.Find("span.color-fg-default.text-bold.mr-1").Text()
-		percent := s.Find("span").Last().Text()
-
-		if lang != "" && percent != "" {
-			langs[strings.TrimSpace(lang)] = strings.TrimSpace(percent)
+	extract := func(_ int, s *goquery.Selection) {
+		lang := strings.TrimSpace(s.Find("span.color-fg-default.text-bold.mr-1").Text())
+		percent := strings.TrimSpace(s.Find("span").Last().Text())
+		if lang != "" && percent != "" && lang != percent && strings.Contains(percent, "%") {
+			langs[lang] = percent
 		}
-	})
+	}
+
+	doc.Find("li.d-inline").Each(extract)
+	if len(langs) == 0 {
+		doc.Find("a[data-ga-click*='language_statistics'], a[href*='/graphs/languages']").Each(extract)
+	}
 
 	return langs, nil
-
 }
 
 // A regex that matches numbers like "63,900", "2245+", "1,234"
