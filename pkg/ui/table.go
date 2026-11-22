@@ -1,9 +1,8 @@
 package ui
 
 import (
-	"fmt"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var baseStyle = lipgloss.NewStyle().
@@ -70,7 +69,6 @@ func InitialTable(repos []Repo, limit int) table.Model{
 	Bold(true)
 
 	t.SetStyles(s)
-	fmt.Println("hi mom",t.Width())
 	return t
 
 }

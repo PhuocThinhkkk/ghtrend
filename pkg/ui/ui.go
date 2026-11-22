@@ -89,10 +89,10 @@ func (m Model) View() string {
 	fileList := RenderFileList(m.list, m.active)
 	extra := m.renderExtraInfor()
 	language := m.renderLanguagesBreakDown()
-	poop := lipgloss.JoinVertical(lipgloss.Left, extra, language)
-	shit := lipgloss.JoinHorizontal(lipgloss.Top, fileList, poop)
+	metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+	detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileList, metricsAndLanguages)
 
-	left := lipgloss.JoinVertical(lipgloss.Left, table, shit)
+	left := lipgloss.JoinVertical(lipgloss.Left, table, detailSection)
 	readMe, err := RenderReadme(m.repoList[m.table.Cursor()].ReadMe)
 	if err != nil {
 		log.Fatal("Error when render readme markdown: ", err)
