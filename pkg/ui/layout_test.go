@@ -241,3 +241,53 @@ func TestView_NeverExceedsTerminalBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestView_TooSmallWindow(t *testing.T) {
+	repos := []Repo{
+		{
+			Owner:    "test",
+			Name:     "repo",
+			Stars:    "100",
+			Forks:    "10",
+			Language: "Go",
+		},
+	}
+	th := theme.Catalog[0]
+	tbl := InitialTable(repos, 10, th)
+	lst := InitialFileList(nil)
+	vp := viewport.New(20, 10)
+
+	smallSizes := [][2]int{
+		{50, 10},
+		{40, 20},
+		{59, 13},
+		{59, 24},
+		{80, 13},
+		{30, 8},
+		{15, 4},
+	}
+
+	for _, size := range smallSizes {
+		w, h := size[0], size[1]
+		m := Model{
+			state:    stateDashboard,
+			theme:    th,
+			table:    tbl,
+			list:     lst,
+			repoList: repos,
+			viewport: vp,
+			width:    w,
+			height:   h,
+		}
+
+		v := m.View()
+		if !strings.Contains(v, "Window Too Small") && !strings.Contains(v, "Window too small") {
+			t.Errorf("Size=%dx%d: expected view to contain 'Window Too Small' notice, got %q", w, h, v)
+		}
+
+		actualH := lipgloss.Height(v)
+		if actualH > h {
+			t.Errorf("Size=%dx%d: view height %d exceeds terminal height %d", w, h, actualH, h)
+		}
+	}
+}
