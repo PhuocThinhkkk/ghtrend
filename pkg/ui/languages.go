@@ -4,21 +4,15 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	languagesBorderStyle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true).
-		BorderForeground(lipgloss.Color("63")).
-		Padding(0,1)
-)
-
-func (m *Model) renderLanguagesBreakDown(totalWidth int) string {
+func (m *Model) renderLanguagesBreakDown(totalWidth int, th theme.Theme) string {
 	if totalWidth <= 0 {
 		totalWidth = 44
 	}
-	header := renderHeader(totalWidth, "Languages Breakdown")
+	header := renderHeader(totalWidth, "Languages Breakdown", th)
 	repo := m.getCursorRepo()
 	languageStrings := ""
 	type kv struct {
@@ -49,5 +43,11 @@ func (m *Model) renderLanguagesBreakDown(totalWidth int) string {
 	if i == 0 {
 		languageStrings += renderEachField(totalWidth, "None", "0%")
 	}
-	return languagesBorderStyle.Width(totalWidth).Render(header + languageStrings)
+
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), true).
+		BorderForeground(th.Border).
+		Padding(0, 1)
+
+	return borderStyle.Width(totalWidth).Render(header + languageStrings)
 }

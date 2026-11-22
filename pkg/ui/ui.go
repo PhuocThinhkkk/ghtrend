@@ -5,8 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/appconfig"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -40,18 +42,21 @@ type EntryInfor = ghclient.EntryInfor
 type ExtraInfor = ghclient.ExtraInfor
 
 type Model struct {
-	state      appState
-	loading    loadingModel
-	fetcher    func() ([]Repo, error)
-	cfg        *flags.CmdConfig
-	table      table.Model
-	list       list.Model
-	repoList   []Repo
-	viewport   viewport.Model
-	active     activeComponent
-	width      int
-	height     int
-	err        error
+	state          appState
+	loading        loadingModel
+	fetcher        func() ([]Repo, error)
+	cfg            *flags.CmdConfig
+	theme          theme.Theme
+	showThemeModal bool
+	themeIndex     int
+	table          table.Model
+	list           list.Model
+	repoList       []Repo
+	viewport       viewport.Model
+	active         activeComponent
+	width          int
+	height         int
+	err            error
 }
 
 func (m *Model) getCursorRepo() Repo {
@@ -91,9 +96,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.showThemeModal {
+			switch msg.String() {
+			case "esc", "t", "q":
+				m.showThemeModal = false
+				return m, nil
+			case "up", "k":
+				m.themeIndex = (m.themeIndex - 1 + len(theme.Catalog)) % len(theme.Catalog)
+				return m, nil
+			case "down", "j":
+				m.themeIndex = (m.themeIndex + 1) % len(theme.Catalog)
+				return m, nil
+			case "enter":
+				selected := theme.Catalog[m.themeIndex]
+				m.theme = selected
+				m.showThemeModal = false
+				ApplyThemeToTable(&m.table, m.theme)
+				m.updateReadmeContent()
+				_ = appconfig.SaveConfig(appconfig.Config{Theme: selected.ID})
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "t":
+			if m.state == stateDashboard {
+				m.showThemeModal = true
+				for i, t := range theme.Catalog {
+					if t.ID == m.theme.ID {
+						m.themeIndex = i
+						break
+					}
+				}
+				return m, nil
+			}
 		case "r":
 			if m.state == stateError {
 				m.state = stateLoading
@@ -164,7 +203,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.repoList = msg.repos
-		m.table = InitialTable(msg.repos, limit)
+		m.table = InitialTable(msg.repos, limit, m.theme)
 		m.list = InitialFileList(msg.repos[0].RootInfor)
 		m.viewport = viewport.New(70, 20)
 		m.active = tableActive
@@ -292,13 +331,26 @@ func (m *Model) updateReadmeContent() {
 		wrapWidth = 60
 	}
 
+	glamourStyle := m.theme.Glamour
+	if glamourStyle == "" {
+		glamourStyle = "dark"
+	}
+
 	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(glamourStyle),
 		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
 	)
+	if err != nil {
+		r, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(wrapWidth),
+			glamour.WithPreservedNewLines(),
+		)
+	}
+
 	var body string
-	if err == nil {
+	if r != nil {
 		body, _ = r.Render(rawMD)
 	} else {
 		body = rawMD
@@ -315,6 +367,10 @@ func (m Model) View() string {
 	height := m.height
 	if height <= 0 {
 		height = 24
+	}
+
+	if m.showThemeModal {
+		return m.renderThemeSelectorModal(width, height)
 	}
 
 	switch m.state {
@@ -344,19 +400,22 @@ func (m Model) renderDashboardView(width, height int) string {
 		fileListWidth := max(22, min(36, leftWidth*40/100))
 		metricsWidth := leftWidth - fileListWidth - 2
 
-		tableRendered := RenderTable(m.table, m.active, leftWidth)
-		fileListRendered := RenderFileList(m.list, m.active, fileListWidth, m.list.Height())
-		extra := m.renderExtraInfor(metricsWidth)
-		language := m.renderLanguagesBreakDown(metricsWidth)
+		tableRendered := RenderTable(m.table, m.active, leftWidth, m.theme)
+		fileListRendered := RenderFileList(m.list, m.active, fileListWidth, m.list.Height(), m.theme)
+		extra := m.renderExtraInfor(metricsWidth, m.theme)
+		language := m.renderLanguagesBreakDown(metricsWidth, m.theme)
 		metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
 		detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 		left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 
-		readmeBorder := borderStyle
+		readmeBorder := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(m.theme.Border)
+
 		if m.active == readmeActive {
-			readmeBorder = readmeBorder.BorderForeground(lipgloss.Color("#BA8E23"))
+			readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
 		}
-		readmeTitle := headerStyle.Render("Readme Preview:")
+		readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
 		readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
 		right := readmeBorder.
 			Width(rightWidth).
@@ -368,8 +427,10 @@ func (m Model) renderDashboardView(width, height int) string {
 		// Compact Mode (width < 110)
 		contentWidth := width - 2
 		if m.active == readmeActive {
-			readmeBorder := borderStyle.BorderForeground(lipgloss.Color("#BA8E23"))
-			readmeTitle := headerStyle.Render("Readme Preview (Full Screen):")
+			readmeBorder := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(m.theme.FocusBorder)
+			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview (Full Screen):")
 			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
 			mainView = readmeBorder.
 				Width(contentWidth).
@@ -379,10 +440,10 @@ func (m Model) renderDashboardView(width, height int) string {
 			fileListWidth := max(22, contentWidth*42/100)
 			metricsWidth := contentWidth - fileListWidth - 2
 
-			tableRendered := RenderTable(m.table, m.active, contentWidth)
-			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, m.list.Height())
-			extra := m.renderExtraInfor(metricsWidth)
-			language := m.renderLanguagesBreakDown(metricsWidth)
+			tableRendered := RenderTable(m.table, m.active, contentWidth, m.theme)
+			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, m.list.Height(), m.theme)
+			extra := m.renderExtraInfor(metricsWidth, m.theme)
+			language := m.renderLanguagesBreakDown(metricsWidth, m.theme)
 			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			mainView = lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
@@ -396,12 +457,12 @@ func (m Model) renderDashboardView(width, height int) string {
 func (m Model) renderStatusBar(width int) string {
 	activeTabStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(lipgloss.Color("#7D56F4")).
+		Foreground(m.theme.Background).
+		Background(m.theme.Primary).
 		Padding(0, 1)
 
 	inactiveTabStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888")).
+		Foreground(m.theme.Muted).
 		Padding(0, 1)
 
 	tab1 := inactiveTabStyle.Render("1: Repos")
@@ -417,8 +478,14 @@ func (m Model) renderStatusBar(width int) string {
 		tab3 = activeTabStyle.Render("3: Readme")
 	}
 
-	tabs := lipgloss.JoinHorizontal(lipgloss.Top, tab1, tab2, tab3)
-	helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("#A0A0A0")).Render(" [Tab] Cycle  [1-3] Focus  [↑/↓] Navigate  [q] Quit")
+	themePill := lipgloss.NewStyle().
+		Foreground(m.theme.Text).
+		Background(m.theme.Surface).
+		Padding(0, 1).
+		Render(fmt.Sprintf("🎨 %s [t]", m.theme.ID))
+
+	tabs := lipgloss.JoinHorizontal(lipgloss.Top, tab1, tab2, tab3, " ", themePill)
+	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render("[Tab] Cycle  [1-3] Focus  [t] Theme  [q] Quit")
 
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText) - 2
 	if gap < 1 {
@@ -427,17 +494,87 @@ func (m Model) renderStatusBar(width int) string {
 	bar := lipgloss.JoinHorizontal(lipgloss.Center, tabs, strings.Repeat(" ", gap), helpText)
 	return lipgloss.NewStyle().
 		Width(width).
-		Background(lipgloss.Color("#1E1E2E")).
+		Background(m.theme.Background).
 		Render(bar)
+}
+
+func (m Model) renderThemeSelectorModal(width, height int) string {
+	modalBorder := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Primary).
+		Padding(1, 2).
+		Width(46)
+
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Primary).
+		Render("🎨 SELECT THEME")
+
+	subtitle := lipgloss.NewStyle().
+		Foreground(m.theme.Muted).
+		Render("Choose an aesthetic palette")
+
+	var rows []string
+	for i, t := range theme.Catalog {
+		cursor := "  "
+		itemStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+		if i == m.themeIndex {
+			cursor = "▶ "
+			itemStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(m.theme.Background).
+				Background(m.theme.Primary)
+		}
+
+		check := " "
+		if t.ID == m.theme.ID {
+			check = "✓"
+		}
+
+		colorSwatch := lipgloss.NewStyle().Foreground(t.Primary).Render("●")
+		rowText := fmt.Sprintf("%s%s %-18s %s", cursor, colorSwatch, t.Name, check)
+		rows = append(rows, itemStyle.Render(rowText))
+	}
+
+	themeList := strings.Join(rows, "\n")
+	help := lipgloss.NewStyle().
+		Foreground(m.theme.Muted).
+		Render("[↑/↓] Navigate  [Enter] Select  [Esc/t] Close")
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Center,
+		title,
+		subtitle,
+		"",
+		themeList,
+		"",
+		help,
+	)
+
+	card := modalBorder.Render(content)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
 }
 
 func RenderWithLoading(cfg *flags.CmdConfig, fetcher func() ([]Repo, error)) (tea.Model, error) {
 	loading := newLoadingModel()
+
+	themeName := "catppuccin"
+	if cfg != nil && cfg.Theme != "" {
+		themeName = cfg.Theme
+	} else {
+		appCfg := appconfig.LoadConfig()
+		if appCfg.Theme != "" {
+			themeName = appCfg.Theme
+		}
+	}
+	th := theme.GetTheme(themeName)
+
 	m := Model{
 		state:   stateLoading,
 		loading: loading,
 		fetcher: fetcher,
 		cfg:     cfg,
+		theme:   th,
 		width:   80,
 		height:  24,
 	}

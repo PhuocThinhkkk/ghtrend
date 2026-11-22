@@ -1,48 +1,29 @@
 package ui
 
 import (
-	"github.com/charmbracelet/lipgloss"
-	"io"
 	"errors"
-	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
+	"io"
 	"strings"
+
+	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-
-	contentStyle = lipgloss.NewStyle().
-	Padding(0, 2).
-	Width(90).
-	MaxHeight(32).
-	Height(32)
-
-	// Define your outer border style
-	borderStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("#7D56F4"))
-
-	headerStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#A5FFD6")).
-	Italic(true).
-	Underline(true).
-	MarginLeft(1).
-	MarginBottom(1)
-
-	renderer, _ = glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(80),
-		glamour.WithPreservedNewLines(),
-	)
-)
-
-func RenderReadme(markdown string, width, height int, state activeComponent) (string, error) {
+func RenderReadme(markdown string, width, height int, state activeComponent, th theme.Theme) (string, error) {
 	if width <= 0 {
 		width = 80
 	}
 	if height <= 0 {
 		height = 24
 	}
+
+	headerStyle := lipgloss.NewStyle().
+		Foreground(th.Accent).
+		Bold(true).
+		MarginLeft(1).
+		MarginBottom(1)
 
 	header := headerStyle.Render("Readme Preview:")
 
@@ -57,13 +38,22 @@ func RenderReadme(markdown string, width, height int, state activeComponent) (st
 		wrapWidth = 20
 	}
 
+	glamourStyle := th.Glamour
+	if glamourStyle == "" {
+		glamourStyle = "dark"
+	}
+
 	termRenderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(glamourStyle),
 		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {
-		termRenderer = renderer
+		termRenderer, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(wrapWidth),
+			glamour.WithPreservedNewLines(),
+		)
 	}
 
 	body, err := termRenderer.Render(markdown)
@@ -72,11 +62,20 @@ func RenderReadme(markdown string, width, height int, state activeComponent) (st
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body)
-	style := contentStyle.Width(width - 4).Height(height - 2).MaxHeight(height - 2)
-	bStyle := borderStyle
+	contentStyle := lipgloss.NewStyle().
+		Padding(0, 1).
+		Width(width - 4).
+		Height(height - 2).
+		MaxHeight(height - 2)
+
+	bStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(th.Border)
+
 	if state == readmeActive {
-		bStyle = bStyle.BorderForeground(lipgloss.Color("#BA8E23"))
+		bStyle = bStyle.BorderForeground(th.FocusBorder)
 	}
-	out := bStyle.Render(style.Render(content))
+
+	out := bStyle.Render(contentStyle.Render(content))
 	return out, nil
 }

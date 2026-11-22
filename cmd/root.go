@@ -14,6 +14,7 @@ var limit int
 var since string
 var lang string
 var noCache bool
+var theme string
 
 var rootCmd = &cobra.Command{
 	Use:   "ghtrend",
@@ -28,6 +29,9 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
+		}
+		if cmd.Flags().Changed("theme") {
+			cfg.Theme = theme
 		}
 		application := app.NewApp(cfg)
 		application.Start()
@@ -49,4 +53,5 @@ func init() {
 	rootCmd.Flags().StringVarP(&since, "since", "r", "daily", "Date range (daily/weekly/monthly)")
 	rootCmd.Flags().StringVarP(&lang, "lang", "L", "All", "filter by programming languages")
 	rootCmd.Flags().BoolVar(&noCache, "no-cache", false, "Ignore cached data and fetch fresh")
+	rootCmd.Flags().StringVarP(&theme, "theme", "t", "", "Theme name (catppuccin, tokyonight, dracula, nord, gruvbox, cyberpunk, classic)")
 }
