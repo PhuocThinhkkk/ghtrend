@@ -2,19 +2,29 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"strings"
+	"time"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+)
+
+type appState int
+
+const (
+	stateLoading appState = iota
+	stateDashboard
+	stateError
 )
 
 type activeComponent int8
@@ -30,13 +40,18 @@ type EntryInfor = ghclient.EntryInfor
 type ExtraInfor = ghclient.ExtraInfor
 
 type Model struct {
-	table    table.Model
-	list     list.Model
-	repoList []Repo
-	viewport viewport.Model
-	active   activeComponent
-	width    int
-	height   int
+	state      appState
+	loading    loadingModel
+	fetcher    func() ([]Repo, error)
+	cfg        *flags.CmdConfig
+	table      table.Model
+	list       list.Model
+	repoList   []Repo
+	viewport   viewport.Model
+	active     activeComponent
+	width      int
+	height     int
+	err        error
 }
 
 func (m *Model) getCursorRepo() Repo {
@@ -51,34 +66,128 @@ func (m *Model) getCursorRepo() Repo {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.state == stateLoading {
+		return tea.Batch(
+			m.loading.Init(),
+			fetchReposCmd(m.fetcher),
+		)
+	}
 	return nil
+}
+
+func fetchReposCmd(fetcher func() ([]Repo, error)) tea.Cmd {
+	return func() tea.Msg {
+		if fetcher == nil {
+			return reposLoadedMsg{repos: nil, err: fmt.Errorf("no fetcher provided")}
+		}
+		repos, err := fetcher()
+		return reposLoadedMsg{repos: repos, err: err}
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "r":
+			if m.state == stateError {
+				m.state = stateLoading
+				m.loading = newLoadingModel()
+				return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher))
+			}
 		case "tab":
-			m.active = (m.active + 1) % 3
-			return m, nil
+			if m.state == stateDashboard {
+				m.active = (m.active + 1) % 3
+				return m, nil
+			}
 		case "shift+tab":
-			m.active = (m.active + 2) % 3
-			return m, nil
+			if m.state == stateDashboard {
+				m.active = (m.active + 2) % 3
+				return m, nil
+			}
 		case "1":
-			m.active = tableActive
-			return m, nil
+			if m.state == stateDashboard {
+				m.active = tableActive
+				return m, nil
+			}
 		case "2":
-			m.active = listActive
-			return m, nil
+			if m.state == stateDashboard {
+				m.active = listActive
+				return m, nil
+			}
 		case "3":
-			m.active = readmeActive
+			if m.state == stateDashboard {
+				m.active = readmeActive
+				return m, nil
+			}
+		}
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		if m.state == stateDashboard {
+			m.recalculateLayout(msg.Width, msg.Height)
+		}
+		return m, nil
+
+	case progressTickMsg:
+		if m.state == stateLoading {
+			m.loading.percent = msg.percent
+			m.loading.message = msg.message
+			cmds = append(cmds, m.loading.progress.SetPercent(msg.percent))
+			if msg.percent < 0.80 {
+				cmds = append(cmds, tickProgress(msg.percent+0.25, "Parsing metrics & generating views...", 300*time.Millisecond))
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+	case reposLoadedMsg:
+		if msg.err != nil {
+			m.state = stateError
+			m.err = msg.err
 			return m, nil
 		}
-	case tea.WindowSizeMsg:
-		m.recalculateLayout(msg.Width, msg.Height)
+		if len(msg.repos) == 0 {
+			m.state = stateError
+			m.err = fmt.Errorf("no trending repositories found for the given criteria")
+			return m, nil
+		}
+
+		limit := 2202
+		if m.cfg != nil {
+			limit = m.cfg.Limit
+		}
+
+		m.repoList = msg.repos
+		m.table = InitialTable(msg.repos, limit)
+		m.list = InitialFileList(msg.repos[0].RootInfor)
+		m.viewport = viewport.New(70, 20)
+		m.active = tableActive
+		m.recalculateLayout(m.width, m.height)
+		m.state = stateDashboard
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.state == stateLoading {
+			var spinnerCmd tea.Cmd
+			m.loading.spinner, spinnerCmd = m.loading.spinner.Update(msg)
+			return m, spinnerCmd
+		}
+
+	case progress.FrameMsg:
+		if m.state == stateLoading {
+			progressModel, progressCmd := m.loading.progress.Update(msg)
+			m.loading.progress = progressModel.(progress.Model)
+			return m, progressCmd
+		}
+	}
+
+	if m.state != stateDashboard {
 		return m, nil
 	}
 
@@ -199,10 +308,6 @@ func (m *Model) updateReadmeContent() {
 }
 
 func (m Model) View() string {
-	if len(m.repoList) == 0 {
-		return "No repositories available"
-	}
-
 	width := m.width
 	if width <= 0 {
 		width = 80
@@ -210,6 +315,23 @@ func (m Model) View() string {
 	height := m.height
 	if height <= 0 {
 		height = 24
+	}
+
+	switch m.state {
+	case stateLoading:
+		return m.renderLoadingView(width, height)
+	case stateError:
+		return m.renderErrorView(width, height)
+	case stateDashboard:
+		return m.renderDashboardView(width, height)
+	default:
+		return ""
+	}
+}
+
+func (m Model) renderDashboardView(width, height int) string {
+	if len(m.repoList) == 0 {
+		return "No repositories available"
 	}
 
 	isWide := width >= 110
@@ -309,28 +431,24 @@ func (m Model) renderStatusBar(width int) string {
 		Render(bar)
 }
 
-func Render(cfg *flags.CmdConfig, repos []Repo) (tea.Model, error) {
-	if len(repos) == 0 {
-		fmt.Println("There was no repos match that")
-		os.Exit(0)
-	}
-
-	table := InitialTable(repos, cfg.Limit)
-	list := InitialFileList(repos[0].RootInfor)
-	vp := viewport.New(70, 20)
-
+func RenderWithLoading(cfg *flags.CmdConfig, fetcher func() ([]Repo, error)) (tea.Model, error) {
+	loading := newLoadingModel()
 	m := Model{
-		table:    table,
-		list:     list,
-		repoList: repos,
-		viewport: vp,
-		active:   tableActive,
-		width:    120,
-		height:   30,
+		state:   stateLoading,
+		loading: loading,
+		fetcher: fetcher,
+		cfg:     cfg,
+		width:   80,
+		height:  24,
 	}
-	m.setFileList()
-	m.updateReadmeContent()
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	return p.Run()
+}
+
+func Render(cfg *flags.CmdConfig, repos []Repo) (tea.Model, error) {
+	fetcher := func() ([]Repo, error) {
+		return repos, nil
+	}
+	return RenderWithLoading(cfg, fetcher)
 }
