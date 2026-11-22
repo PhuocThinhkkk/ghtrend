@@ -277,7 +277,8 @@ func parseContributorsCountFromHTML(html string) (int64, error) {
 // contributorsFragmentURL looks for a
 // <include-fragment src="...contributors_list...">, which is how GitHub
 // currently loads the contributors count asynchronously, and returns an
-// absolute URL for it.
+// absolute URL for it. If not found in the HTML directly, it attempts to
+// construct the fragment URL from canonical repository metadata.
 func contributorsFragmentURL(html string) (string, bool) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
@@ -285,17 +286,34 @@ func contributorsFragmentURL(html string) (string, bool) {
 	}
 
 	src, exists := doc.Find(`include-fragment[src*="contributors_list"]`).First().Attr("src")
-	if !exists || strings.TrimSpace(src) == "" {
-		return "", false
+	if exists && strings.TrimSpace(src) != "" {
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+			return src, true
+		}
+		if !strings.HasPrefix(src, "/") {
+			src = "/" + src
+		}
+		return "https://github.com" + src, true
 	}
 
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		return src, true
+	// Fallback: deduce repository path from canonical link or meta tags
+	repoPath := ""
+	if canonical, ok := doc.Find(`link[rel="canonical"]`).First().Attr("href"); ok {
+		repoPath = canonical
+	} else if ogURL, ok := doc.Find(`meta[property="og:url"]`).First().Attr("content"); ok {
+		repoPath = ogURL
 	}
-	if !strings.HasPrefix(src, "/") {
-		src = "/" + src
+
+	if repoPath != "" {
+		repoPath = strings.TrimRight(repoPath, "/")
+		// Expecting https://github.com/owner/repo
+		parts := strings.Split(repoPath, "/")
+		if len(parts) >= 5 && parts[2] == "github.com" {
+			return fmt.Sprintf("https://github.com/%s/%s/contributors_list?deferred=true", parts[3], parts[4]), true
+		}
 	}
-	return "https://github.com" + src, true
+
+	return "", false
 }
 
 // extractContributorsCount tries to find the contributors count within a
@@ -360,7 +378,7 @@ func parseCountToken(token string) (int64, bool) {
 }
 
 // parseIssuesPr parses the count shown in the UnderlineNav for Issues and Pull Requests.
-// It tries multiple selectors and fallbacks because GitHub's attributes vary (e.g. data-tab-item may have a prefix).
+// It tries multiple selectors and fallbacks because GitHub's attributes vary across layout versions.
 func parseIssuesPr(html string) (string, string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
@@ -368,26 +386,45 @@ func parseIssuesPr(html string) (string, string, error) {
 	}
 
 	issueSelectors := []string{
+		`a[data-tab-item="issues"] [data-component="CounterLabel"]`,
+		`a[data-tab-item="issues"] span.Counter`,
+		`a[href$="/issues"] [data-component="CounterLabel"]`,
+		`a[href*="/issues"] [data-component="CounterLabel"]`,
 		"#issues-tab span.Counter",                    // anchor id -> span.Counter
 		`a[data-tab-item$="issues-tab"] span.Counter`, // data-tab-item ends-with "issues-tab"
 		`a[id$="issues-tab"] span.Counter`,            // anchor id ending with issues-tab
 		"span#issues-repo-tab-count",                  // direct span id used in some pages
+		`a[data-tab-item="issues"]`,
 	}
 	prSelectors := []string{
+		`a[data-tab-item="pull-requests"] [data-component="CounterLabel"]`,
+		`a[data-tab-item="pull-requests"] span.Counter`,
+		`a[href$="/pulls"] [data-component="CounterLabel"]`,
+		`a[href*="/pulls"] [data-component="CounterLabel"]`,
 		"#pull-requests-tab span.Counter",
 		`a[data-tab-item$="pull-requests-tab"] span.Counter`,
 		`a[id$="pull-requests-tab"] span.Counter`,
 		"span#pull-requests-repo-tab-count",
+		`a[data-tab-item="pull-requests"]`,
 	}
 
 	// helper:
 	trySelectors := func(selectors []string) string {
 		for _, sel := range selectors {
 			if node := doc.Find(sel).First(); node.Length() > 0 {
+				if counter := node.Find(`[data-component="CounterLabel"]`).First(); counter.Length() > 0 {
+					if txt := strings.TrimSpace(counter.Text()); txt != "" {
+						return txt
+					}
+				}
+				if counter := node.Find(`span.Counter`).First(); counter.Length() > 0 {
+					if txt := strings.TrimSpace(counter.Text()); txt != "" {
+						return txt
+					}
+				}
 				if txt := strings.TrimSpace(node.Text()); txt != "" {
 					return txt
 				}
-				// fallback:
 				if title, ok := node.Attr("title"); ok && strings.TrimSpace(title) != "" {
 					return strings.TrimSpace(title)
 				}
@@ -414,7 +451,7 @@ func parseIssuesPr(html string) (string, string, error) {
 		// try again
 		doc.Find("span.Counter").EachWithBreak(func(i int, s *goquery.Selection) bool {
 			txt := strings.TrimSpace(s.Text())
-			if txt != "" && txt != issues { // shit
+			if txt != "" && txt != issues {
 				prs = txt
 				return false
 			}

@@ -145,7 +145,7 @@ func TestGoModDirectDependencyVersions(t *testing.T) {
 
 	// Direct dependencies expected after the bump in this PR.
 	wantDirect := map[string]string{
-		"github.com/JohannesKaufmann/html-to-markdown/v2": "v2.5.0",
+		"github.com/JohannesKaufmann/html-to-markdown/v2": "v2.5.2",
 		"github.com/PuerkitoBio/goquery":                  "v1.12.0",
 		"github.com/charmbracelet/bubbles":                "v1.0.0",
 		"github.com/charmbracelet/bubbletea":              "v1.3.10",
@@ -185,10 +185,10 @@ func TestGoModIndirectDependencyVersions(t *testing.T) {
 		"github.com/dlclark/regexp2":            "v1.11.5",
 		"github.com/mattn/go-runewidth":         "v0.0.19",
 		"github.com/yuin/goldmark-emoji":        "v1.0.6",
-		"golang.org/x/net":                      "v0.52.0",
-		"golang.org/x/sys":                      "v0.42.0",
-		"golang.org/x/term":                     "v0.41.0",
-		"golang.org/x/text":                     "v0.35.0",
+		"golang.org/x/net":                      "v0.55.0",
+		"golang.org/x/sys":                      "v0.45.0",
+		"golang.org/x/term":                     "v0.43.0",
+		"golang.org/x/text":                     "v0.37.0",
 	}
 
 	for module, wantVersion := range wantIndirect {
