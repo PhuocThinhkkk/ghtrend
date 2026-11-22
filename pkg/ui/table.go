@@ -11,7 +11,7 @@ func RenderTable(t table.Model, state activeComponent, width, height int, th the
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(th.Border)
 	if width > 0 {
-		style = style.Width(max(10, width-2))
+		style = style.Width(max(10, width-2)).MaxWidth(width)
 	}
 	if height > 0 {
 		style = style.Height(max(1, height-2)).MaxHeight(height)
@@ -54,8 +54,8 @@ func UpdateTableDimensions(t *table.Model, width, height int) {
 		t.SetWidth(max(10, width-2))
 	}
 	if height > 0 {
-		// Table body height = box height - 3 (1 header bottom border + 2 outer box borders)
-		t.SetHeight(max(1, height-3))
+		// Table body height = box height - 4 (1 header text + 1 header bottom border + 2 outer box borders)
+		t.SetHeight(max(1, height-4))
 	}
 }
 

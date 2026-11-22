@@ -189,8 +189,8 @@ func TestView_NeverExceedsTerminalBounds(t *testing.T) {
 		},
 	}
 
-	widths := []int{70, 80, 90, 100, 110, 120, 140, 160}
-	heights := []int{24, 26, 28, 30, 35, 40, 50}
+	widths := []int{60, 65, 70, 80, 90, 100, 110, 120, 140, 160}
+	heights := []int{14, 16, 18, 20, 22, 24, 26, 28, 30, 35, 40, 50}
 	modes := []activeComponent{tableActive, listActive, readmeActive}
 
 	for _, th := range theme.Catalog {
@@ -235,10 +235,72 @@ func TestView_NeverExceedsTerminalBounds(t *testing.T) {
 						if !strings.Contains(v, "Repo name") {
 							t.Errorf("Theme=%s Size=%dx%d: expected view to contain 'Repo name' table header", th.ID, w, h)
 						}
+						// Verify bottom border is not chopped off
+						if !strings.Contains(v, "╰") {
+							t.Errorf("Theme=%s Size=%dx%d: expected view to contain table bottom border corner '╰'", th.ID, w, h)
+						}
 					}
 				}
 			}
 		}
+	}
+}
+
+func TestThemeModal_NeverExceedsTerminalHeight(t *testing.T) {
+	repos := []Repo{{Owner: "test", Name: "repo", Stars: "1", Forks: "1", Language: "Go"}}
+	for _, h := range []int{14, 15, 16, 17, 20, 24, 30} {
+		for _, w := range []int{60, 80, 120} {
+			th := theme.Catalog[0]
+			tbl := InitialTable(repos, 10, th)
+			lst := InitialFileList(nil)
+			vp := viewport.New(60, 20)
+			m := Model{
+				state:          stateDashboard,
+				theme:          th,
+				table:          tbl,
+				list:           lst,
+				repoList:       repos,
+				viewport:       vp,
+				showThemeModal: true,
+				width:          w,
+				height:         h,
+			}
+			v := m.View()
+			actualH := lipgloss.Height(v)
+			if actualH > h {
+				t.Errorf("ThemeModal Size=%dx%d: view height %d exceeds terminal height %d", w, h, actualH, h)
+			}
+		}
+	}
+}
+
+func TestLanguages_SortNumerically(t *testing.T) {
+	repos := []Repo{
+		{
+			Owner: "test",
+			Name:  "repo",
+			LanguagesBreakDown: map[string]string{
+				"Python": "9.5%",
+				"Go":     "80.0%",
+				"Shell":  "10.5%",
+			},
+		},
+	}
+	th := theme.Catalog[0]
+	m := Model{
+		repoList: repos,
+		theme:    th,
+	}
+	rendered := m.renderLanguagesBreakDown(40, 10, th)
+	goIdx := strings.Index(rendered, "Go")
+	shellIdx := strings.Index(rendered, "Shell")
+	pyIdx := strings.Index(rendered, "Python")
+
+	if goIdx == -1 || shellIdx == -1 || pyIdx == -1 {
+		t.Fatalf("expected all languages in breakdown, got %q", rendered)
+	}
+	if !(goIdx < shellIdx && shellIdx < pyIdx) {
+		t.Errorf("expected sorted order Go (80%%) -> Shell (10.5%%) -> Python (9.5%%), got %q", rendered)
 	}
 }
 

@@ -606,11 +606,17 @@ func (m Model) renderStatusBar(width int) string {
 }
 
 func (m Model) renderThemeSelectorModal(width, height int) string {
+	padV := 1
+	if height < 17 {
+		padV = 0
+	}
 	modalBorder := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Primary).
-		Padding(1, 2).
-		Width(46)
+		Padding(padV, 2).
+		Width(min(46, width-2)).
+		MaxWidth(width).
+		MaxHeight(height)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
@@ -648,15 +654,25 @@ func (m Model) renderThemeSelectorModal(width, height int) string {
 		Foreground(m.theme.Muted).
 		Render("[↑/↓] Navigate  [Enter] Select  [Esc/t] Close")
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Center,
-		title,
-		subtitle,
-		"",
-		themeList,
-		"",
-		help,
-	)
+	var content string
+	if height < 16 {
+		content = lipgloss.JoinVertical(
+			lipgloss.Center,
+			title,
+			themeList,
+			help,
+		)
+	} else {
+		content = lipgloss.JoinVertical(
+			lipgloss.Center,
+			title,
+			subtitle,
+			"",
+			themeList,
+			"",
+			help,
+		)
+	}
 
 	card := modalBorder.Render(content)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)

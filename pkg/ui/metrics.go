@@ -2,12 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m *Model) renderExtraInfor(totalWidth, height int, th theme.Theme) string {
+func (m Model) renderExtraInfor(totalWidth, height int, th theme.Theme) string {
 	if totalWidth <= 0 {
 		totalWidth = 44
 	}
@@ -24,11 +25,13 @@ func (m *Model) renderExtraInfor(totalWidth, height int, th theme.Theme) string 
 		Border(lipgloss.NormalBorder(), true).
 		BorderForeground(th.Border).
 		Padding(0, 1).
-		Width(max(10, totalWidth-2))
+		Width(max(10, totalWidth-2)).
+		MaxWidth(totalWidth)
 
 	if height > 0 {
 		extraStyle = extraStyle.Height(max(1, height-2)).MaxHeight(height)
 	}
 
-	return extraStyle.Render(header + commits + prs + issues + contributors)
+	content := strings.TrimRight(header+commits+prs+issues+contributors, "\n")
+	return extraStyle.Render(content)
 }
