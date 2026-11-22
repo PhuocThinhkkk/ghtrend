@@ -130,3 +130,61 @@ func TestLoadLanguageBreakdown_APIFailureFallbackToPrimary(t *testing.T) {
 		t.Errorf("expected Python 100%%, got %s", r.LanguagesBreakDown["Python"])
 	}
 }
+
+func TestFetchLanguagesFromAPI_ValidationAndEmpty(t *testing.T) {
+	// Empty inputs
+	if _, err := fetchLanguagesFromAPI("", "repo"); err == nil {
+		t.Errorf("expected error for empty owner")
+	}
+	if _, err := fetchLanguagesFromAPI("owner", ""); err == nil {
+		t.Errorf("expected error for empty repo")
+	}
+
+	// Empty repo returning {}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]int64{})
+	}))
+	defer server.Close()
+
+	origURL := githubAPIBaseURL
+	githubAPIBaseURL = server.URL
+	defer func() { githubAPIBaseURL = origURL }()
+
+	langs, err := fetchLanguagesFromAPI("owner", "empty")
+	if err != nil {
+		t.Fatalf("unexpected error for empty repo: %v", err)
+	}
+	if len(langs) != 0 {
+		t.Errorf("expected 0 languages for empty repo, got %d", len(langs))
+	}
+}
+
+func TestParseLanguagesBreakDown_GraphsLanguagesSelector(t *testing.T) {
+	html := `<html><body>
+		<a href="/owner/repo/graphs/languages">
+			<span class="color-fg-default text-bold mr-1">Rust</span>
+			<span>100.0%</span>
+		</a>
+	</body></html>`
+
+	langs, err := parseLanguagesBreakDown(html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if langs["Rust"] != "100.0%" {
+		t.Errorf("expected Rust 100.0%%, got %s", langs["Rust"])
+	}
+
+	// Guard against single span without percent
+	badHTML := `<html><body>
+		<a href="/owner/repo/graphs/languages">
+			<span class="color-fg-default text-bold mr-1">Go</span>
+		</a>
+	</body></html>`
+
+	badLangs, _ := parseLanguagesBreakDown(badHTML)
+	if len(badLangs) != 0 {
+		t.Errorf("expected 0 languages when percentage is missing, got %v", badLangs)
+	}
+}
