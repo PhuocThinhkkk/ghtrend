@@ -156,7 +156,7 @@ func TestGetCommitCountFromHTML(t *testing.T) {
 		t.Errorf("expected %d, got %d", expected, commits)
 	}
 	expected2 := int64(1121234)
-	if commits != expected {
+	if commits2 != expected2 {
 		t.Errorf("expected %d, got %d", expected2, commits2)
 	}
 }

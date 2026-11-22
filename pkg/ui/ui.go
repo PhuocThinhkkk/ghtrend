@@ -357,6 +357,7 @@ func (m *Model) updateReadmeContent() {
 	}
 
 	m.viewport.SetContent(body)
+	m.viewport.GotoTop()
 }
 
 func (m Model) View() string {
@@ -496,7 +497,15 @@ func (m Model) renderStatusBar(width int) string {
 	}
 
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
-	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render("[Tab] Cycle  [1-3] Focus  [t] Theme  [q] Quit")
+
+	helpStr := "[Tab] Cycle  [1-3] Focus  [t] Theme  [q] Quit"
+	if width < 85 {
+		helpStr = "[Tab] Nav  [t] Theme  [q] Quit"
+	}
+	if width < 65 {
+		helpStr = "[t] Theme  [q] Quit"
+	}
+	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
 
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText) - 2
 	if gap < 1 {

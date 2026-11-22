@@ -1,7 +1,6 @@
 package appconfig
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -13,33 +12,41 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestSaveAndLoadConfig(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ghtrend-config-test")
+func TestConfigFilePath(t *testing.T) {
+	path, err := ConfigFilePath()
 	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
+		t.Fatalf("unexpected error getting config file path: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	if filepath.Base(path) != "config.json" {
+		t.Errorf("expected filename 'config.json', got %s", filepath.Base(path))
+	}
+}
 
-	configPath := filepath.Join(tempDir, "config.json")
+func TestSaveAndLoadConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "ghtrend", "config.json")
 
 	cfg := Config{
 		Theme: "dracula",
 	}
 
-	// Test direct save and load logic
-	data := []byte(`{"theme": "dracula"}`)
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
-
-	readData, err := os.ReadFile(configPath)
+	err := SaveConfigToPath(cfg, configPath)
 	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
+		t.Fatalf("unexpected error saving config: %v", err)
 	}
 
-	if string(readData) != string(data) {
-		t.Errorf("expected %s, got %s", data, readData)
+	loaded := LoadConfigFromPath(configPath)
+	if loaded.Theme != "dracula" {
+		t.Errorf("expected theme 'dracula', got %q", loaded.Theme)
 	}
+}
 
-	_ = cfg
+func TestLoadConfig_NonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "nonexistent.json")
+
+	loaded := LoadConfigFromPath(configPath)
+	if loaded.Theme != "catppuccin" {
+		t.Errorf("expected fallback theme 'catppuccin', got %q", loaded.Theme)
+	}
 }

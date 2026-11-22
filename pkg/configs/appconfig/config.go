@@ -29,12 +29,15 @@ func ConfigFilePath() (string, error) {
 }
 
 func LoadConfig() Config {
-	cfg := DefaultConfig()
 	path, err := ConfigFilePath()
 	if err != nil {
-		return cfg
+		return DefaultConfig()
 	}
+	return LoadConfigFromPath(path)
+}
 
+func LoadConfigFromPath(path string) Config {
+	cfg := DefaultConfig()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return cfg
@@ -52,7 +55,10 @@ func SaveConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	return SaveConfigToPath(cfg, path)
+}
 
+func SaveConfigToPath(cfg Config, path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err

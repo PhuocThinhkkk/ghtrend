@@ -11,8 +11,7 @@ import (
 )
 
 var docStyle = lipgloss.NewStyle().
-	Border(lipgloss.NormalBorder(), true).
-	BorderForeground(lipgloss.Color("63"))
+	Border(lipgloss.NormalBorder(), true)
 
 type item struct {
 	name string
@@ -29,19 +28,22 @@ func (m *Model) setFileList() {
 	if tableCursor < 0 || tableCursor >= len(m.repoList) {
 		return
 	}
+
 	dirs := m.repoList[tableCursor].RootInfor
-	widthAllowed := m.list.Width() - 7
-	if widthAllowed <= 0 {
+
+	widthAllowed := m.list.Width() - 5
+	if widthAllowed < 10 {
 		widthAllowed = 25
 	}
 
-	for i := 0; i <= len(dirs)-1; i++ {
+	for i := 0; i < len(dirs); i++ {
 		name := ""
-		if len(dirs[i].Name) >= widthAllowed {
+		runes := []rune(dirs[i].Name)
+		if len(runes) >= widthAllowed {
 			if widthAllowed > 3 {
-				name = dirs[i].Name[:widthAllowed-3] + "..."
+				name = string(runes[:widthAllowed-3]) + "..."
 			} else {
-				name = dirs[i].Name
+				name = string(runes)
 			}
 		} else {
 			name = dirs[i].Name
@@ -58,9 +60,9 @@ func (m *Model) setFileList() {
 			}
 		}
 		items = append(items, newItem)
-
 	}
 	m.list.SetItems(items)
+	m.list.SetDelegate(simpleDelegate{selectedColor: m.theme.Accent})
 }
 
 func RenderFileList(m list.Model, state activeComponent, width, height int, th theme.Theme) string {
@@ -80,7 +82,7 @@ func RenderFileList(m list.Model, state activeComponent, width, height int, th t
 func InitialFileList(dirs []EntryInfor) list.Model {
 	items := []list.Item{}
 
-	for i := 0; i <= len(dirs)-1; i++ {
+	for i := 0; i < len(dirs); i++ {
 		var newItem item
 		if dirs[i].Type == "dir" {
 			newItem = item{
@@ -93,7 +95,6 @@ func InitialFileList(dirs []EntryInfor) list.Model {
 		}
 
 		items = append(items, newItem)
-
 	}
 
 	m := list.New(items, simpleDelegate{}, 35, 14)
@@ -106,7 +107,9 @@ func InitialFileList(dirs []EntryInfor) list.Model {
 	return m
 }
 
-type simpleDelegate struct{}
+type simpleDelegate struct {
+	selectedColor lipgloss.TerminalColor
+}
 
 func (d simpleDelegate) Height() int                               { return 1 }
 func (d simpleDelegate) Spacing() int                              { return 0 }
@@ -120,7 +123,11 @@ func (d simpleDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 	str := i.Title()
 
 	if index == m.Index() {
-		str = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render("  " + str)
+		col := d.selectedColor
+		if col == nil {
+			col = lipgloss.Color("229")
+		}
+		str = lipgloss.NewStyle().Foreground(col).Bold(true).Render("  " + str)
 	} else {
 		str = "  " + str
 	}
