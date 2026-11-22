@@ -275,35 +275,36 @@ func (m *Model) recalculateLayout(width, height int) {
 	m.height = height
 
 	isWide := width >= 110
+	availH := height - 1
 
 	if isWide {
 		leftWidth := max(55, min(85, width*52/100))
-		rightWidth := width - leftWidth - 3
+		rightWidth := width - leftWidth
 
-		tableHeight := max(6, min(12, height*36/100))
-		lowerHeight := max(8, height-tableHeight-5)
+		tableHeight := max(6, min(12, availH*38/100))
+		lowerHeight := availH - tableHeight
 
 		fileListWidth := max(22, min(36, leftWidth*40/100))
 
 		UpdateTableDimensions(&m.table, leftWidth, tableHeight)
-		m.list.SetWidth(fileListWidth)
-		m.list.SetHeight(lowerHeight)
+		m.list.SetWidth(fileListWidth - 2)
+		m.list.SetHeight(max(1, lowerHeight-2))
 
 		m.viewport.Width = max(20, rightWidth-4)
-		m.viewport.Height = max(6, height-5)
+		m.viewport.Height = max(1, availH-4)
 	} else {
-		contentWidth := width - 2
-		tableHeight := max(6, min(10, height*35/100))
-		lowerHeight := max(8, height-tableHeight-5)
+		contentWidth := width
+		tableHeight := max(6, min(10, availH*38/100))
+		lowerHeight := availH - tableHeight
 
 		fileListWidth := max(22, contentWidth*42/100)
 
 		UpdateTableDimensions(&m.table, contentWidth, tableHeight)
-		m.list.SetWidth(fileListWidth)
-		m.list.SetHeight(lowerHeight)
+		m.list.SetWidth(fileListWidth - 2)
+		m.list.SetHeight(max(1, lowerHeight-2))
 
 		m.viewport.Width = max(20, contentWidth-4)
-		m.viewport.Height = max(6, height-5)
+		m.viewport.Height = max(1, availH-4)
 	}
 
 	m.setFileList()
@@ -370,6 +371,10 @@ func (m Model) View() string {
 		height = 24
 	}
 
+	if width < 60 || height < 14 {
+		return m.renderTooSmallView(width, height)
+	}
+
 	if m.showThemeModal {
 		return m.renderThemeSelectorModal(width, height)
 	}
@@ -386,65 +391,132 @@ func (m Model) View() string {
 	}
 }
 
+func (m Model) renderTooSmallView(width, height int) string {
+	if height < 6 || width < 25 {
+		msg := "Window too small"
+		if height > 1 && width >= 10 {
+			msg += "\nMin: 60x14"
+		}
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, msg)
+	}
+
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Primary).
+		Render("⚠️  Window Too Small")
+
+	sizeInfo := lipgloss.NewStyle().
+		Foreground(m.theme.Muted).
+		Render(fmt.Sprintf("Current: %d×%d", width, height))
+
+	reqInfo := lipgloss.NewStyle().
+		Foreground(m.theme.Text).
+		Render("Min required: 60×14")
+
+	action := lipgloss.NewStyle().
+		Foreground(m.theme.Accent).
+		Render("Please enlarge window")
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Center,
+		title,
+		sizeInfo,
+		reqInfo,
+		action,
+	)
+
+	card := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Border).
+		Padding(0, 1).
+		MaxHeight(height).
+		MaxWidth(width).
+		Align(lipgloss.Center).
+		Render(content)
+
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
+}
+
 func (m Model) renderDashboardView(width, height int) string {
 	if len(m.repoList) == 0 {
 		return "No repositories available"
 	}
 
 	isWide := width >= 110
+	availH := height - 1
 
 	var mainView string
 	if isWide {
 		leftWidth := max(55, min(85, width*52/100))
-		rightWidth := width - leftWidth - 3
+		rightWidth := width - leftWidth
+
+		tableHeight := max(6, min(12, availH*38/100))
+		lowerHeight := availH - tableHeight
 
 		fileListWidth := max(22, min(36, leftWidth*40/100))
-		metricsWidth := leftWidth - fileListWidth - 2
+		metricsWidth := leftWidth - fileListWidth
 
-		tableRendered := RenderTable(m.table, m.active, leftWidth, m.theme)
-		fileListRendered := RenderFileList(m.list, m.active, fileListWidth, m.list.Height(), m.theme)
-		extra := m.renderExtraInfor(metricsWidth, m.theme)
-		language := m.renderLanguagesBreakDown(metricsWidth, m.theme)
+		tableRendered := RenderTable(m.table, m.active, leftWidth, tableHeight, m.theme)
+		fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
+
+		extraH := 7
+		if lowerHeight < 14 {
+			extraH = max(4, lowerHeight/2)
+		}
+		langH := lowerHeight - extraH
+
+		extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
+		language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
 		metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
 		detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 		left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 
 		readmeBorder := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(m.theme.Border)
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(m.theme.Border).
+			Width(rightWidth - 2).
+			Height(availH - 2).
+			MaxHeight(availH)
 
 		if m.active == readmeActive {
 			readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
 		}
 		readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
 		readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-		right := readmeBorder.
-			Width(rightWidth).
-			Height(height - 4).
-			Render(readmeContent)
+		right := readmeBorder.Render(readmeContent)
 
 		mainView = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	} else {
 		// Compact Mode (width < 110)
-		contentWidth := width - 2
+		contentWidth := width
+		tableHeight := max(6, min(10, availH*38/100))
+		lowerHeight := availH - tableHeight
+
 		if m.active == readmeActive {
 			readmeBorder := lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.FocusBorder)
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(m.theme.FocusBorder).
+				Width(contentWidth - 2).
+				Height(availH - 2).
+				MaxHeight(availH)
 			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview (Full Screen):")
 			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			mainView = readmeBorder.
-				Width(contentWidth).
-				Height(height - 4).
-				Render(readmeContent)
+			mainView = readmeBorder.Render(readmeContent)
 		} else {
 			fileListWidth := max(22, contentWidth*42/100)
-			metricsWidth := contentWidth - fileListWidth - 2
+			metricsWidth := contentWidth - fileListWidth
 
-			tableRendered := RenderTable(m.table, m.active, contentWidth, m.theme)
-			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, m.list.Height(), m.theme)
-			extra := m.renderExtraInfor(metricsWidth, m.theme)
-			language := m.renderLanguagesBreakDown(metricsWidth, m.theme)
+			tableRendered := RenderTable(m.table, m.active, contentWidth, tableHeight, m.theme)
+			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
+
+			extraH := 7
+			if lowerHeight < 14 {
+				extraH = max(4, lowerHeight/2)
+			}
+			langH := lowerHeight - extraH
+
+			extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
+			language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
 			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			mainView = lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
@@ -499,21 +571,36 @@ func (m Model) renderStatusBar(width int) string {
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 
 	helpStr := "[Tab] Cycle  [1-3] Focus  [t] Theme  [q] Quit"
-	if width < 85 {
-		helpStr = "[Tab] Nav  [t] Theme  [q] Quit"
+	if width < 120 {
+		helpStr = "[Tab] Focus  [t] Theme  [q] Quit"
 	}
-	if width < 65 {
-		helpStr = "[t] Theme  [q] Quit"
+	if width < 95 {
+		helpStr = "[Tab] Nav  [q] Quit"
 	}
-	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
+	if width < 70 {
+		helpStr = "[q] Quit"
+	}
 
-	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText) - 2
-	if gap < 1 {
-		gap = 1
+	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
+	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
+
+	if gap < 1 && width >= 80 {
+		helpStr = "[q] Quit"
+		helpText = lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
+		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 	}
+
+	if gap < 1 {
+		statusItems = []string{tab1, tab2, tab3}
+		tabs = lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
+		gap = max(1, width-lipgloss.Width(tabs)-lipgloss.Width(helpText))
+	}
+
 	bar := lipgloss.JoinHorizontal(lipgloss.Center, tabs, strings.Repeat(" ", gap), helpText)
 	return lipgloss.NewStyle().
 		Width(width).
+		Height(1).
+		MaxHeight(1).
 		Background(m.theme.Background).
 		Render(bar)
 }

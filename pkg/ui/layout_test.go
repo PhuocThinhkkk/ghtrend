@@ -8,6 +8,7 @@ import (
 	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestCalculateTableColumns(t *testing.T) {
@@ -158,5 +159,85 @@ func TestModel_RecalculateLayout(t *testing.T) {
 	bar := m.renderStatusBar(100)
 	if !strings.Contains(bar, "@torvalds") {
 		t.Errorf("expected status bar to contain '@torvalds', got %q", bar)
+	}
+}
+
+func TestView_NeverExceedsTerminalBounds(t *testing.T) {
+	repos := []Repo{
+		{
+			Owner:       "elementalsouls",
+			Name:        "Claude-BugHunter",
+			Stars:       "16,634",
+			Forks:       "1,881",
+			Language:    "Python",
+			Description: "Built by Sachin Sharma",
+			ReadMe:      "# claude-bughunter\n\nBuilt by Sachin Sharma",
+			RootInfor: []EntryInfor{
+				{Type: "dir", Name: ".claude-plugin"},
+				{Type: "file", Name: "README.md"},
+			},
+			ExtraInfor: ExtraInfor{
+				TotalCommits: 356,
+				PullRequests: "15",
+				Issues:       "5",
+				Contributors: 19,
+			},
+			LanguagesBreakDown: map[string]string{
+				"Python": "80%",
+				"Shell":  "20%",
+			},
+		},
+	}
+
+	widths := []int{70, 80, 90, 100, 110, 120, 140, 160}
+	heights := []int{24, 26, 28, 30, 35, 40, 50}
+	modes := []activeComponent{tableActive, listActive, readmeActive}
+
+	for _, th := range theme.Catalog {
+		for _, w := range widths {
+			for _, h := range heights {
+				for _, act := range modes {
+					tbl := InitialTable(repos, 10, th)
+					lst := InitialFileList(repos[0].RootInfor)
+					vp := viewport.New(60, 20)
+
+					m := Model{
+						state:    stateDashboard,
+						theme:    th,
+						table:    tbl,
+						list:     lst,
+						repoList: repos,
+						viewport: vp,
+						active:   act,
+						width:    w,
+						height:   h,
+					}
+					m.recalculateLayout(w, h)
+					v := m.View()
+
+					actualH := lipgloss.Height(v)
+					actualW := lipgloss.Width(v)
+
+					if actualH > h {
+						t.Errorf("Theme=%s Size=%dx%d Active=%d: view height %d exceeds terminal height %d (overflow by %d lines)",
+							th.ID, w, h, act, actualH, h, actualH-h)
+					}
+					if actualW > w {
+						t.Errorf("Theme=%s Size=%dx%d Active=%d: view width %d exceeds terminal width %d (overflow by %d cols)",
+							th.ID, w, h, act, actualW, w, actualW-w)
+					}
+
+					// Verify headers are never cut off in tableActive or wide mode
+					if act == tableActive || w >= 110 {
+						if !strings.Contains(v, "Owner") {
+							t.Errorf("Theme=%s Size=%dx%d: expected view to contain 'Owner' table header", th.ID, w, h)
+						}
+						if !strings.Contains(v, "Repo name") {
+							t.Errorf("Theme=%s Size=%dx%d: expected view to contain 'Repo name' table header", th.ID, w, h)
+						}
+					}
+				}
+			}
+		}
 	}
 }

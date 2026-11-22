@@ -68,10 +68,10 @@ func (m *Model) setFileList() {
 func RenderFileList(m list.Model, state activeComponent, width, height int, th theme.Theme) string {
 	style := docStyle.BorderForeground(th.Border)
 	if width > 0 {
-		style = style.Width(width)
+		style = style.Width(max(10, width-2))
 	}
 	if height > 0 {
-		style = style.Height(height)
+		style = style.Height(max(1, height-2)).MaxHeight(height)
 	}
 	if state == listActive {
 		style = style.BorderForeground(th.FocusBorder)
