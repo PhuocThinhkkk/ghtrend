@@ -1,8 +1,9 @@
 package ghclient
 
 import (
-	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 	"sync"
+
+	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 )
 
 type Repo struct {
@@ -37,16 +38,11 @@ type RepoList []Repo
 
 func (repos RepoList) loadDetails() error {
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(repos))
+	errChan := make(chan error, 5*len(repos)+1)
 
 	for i := range repos {
 		signal := make(chan struct{})
 		repo := &repos[i]
-		defer func() {
-			if repo.HtmlPageTerm != "" {
-				repo.HtmlPageTerm = "done"
-			}
-		}()
 
 		wg.Add(5)
 		go repo.loadHtmlPageTerm(errChan, &wg, signal)
@@ -56,11 +52,26 @@ func (repos RepoList) loadDetails() error {
 		go repo.loadLanguageBreakdown(errChan, &wg, signal)
 	}
 	wg.Wait()
+
+	for i := range repos {
+		repos[i].HtmlPageTerm = ""
+	}
+
 	close(errChan)
 	if len(errChan) > 0 {
 		return <-errChan
 	}
 	return nil
+}
+
+func sendErrorNonBlocking(errChan chan<- error, err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case errChan <- err:
+	default:
+	}
 }
 
 func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
@@ -72,7 +83,7 @@ func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-c
 	rootInfo, err := ParseRootInfo(r.HtmlPageTerm)
 	if err != nil {
 		r.RootInfor = []EntryInfor{}
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
 	r.RootInfor = rootInfo
@@ -81,22 +92,25 @@ func (r *Repo) loadRootInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-c
 func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
 	<-signal
+	if r.HtmlPageTerm == "" {
+		return
+	}
 	issues, prs, err := parseIssuesPr(r.HtmlPageTerm)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
 	contributors, err := parseContributorsCountFromHTML(r.HtmlPageTerm)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
 	commits, err := ParseCommitCountFromHTML(r.HtmlPageTerm)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
-	
+
 	extraInfo := ExtraInfor{
 		Issues:       issues,
 		PullRequests: prs,
@@ -109,9 +123,12 @@ func (r *Repo) loadExtraInfo(errChan chan<- error, wg *sync.WaitGroup, signal <-
 func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
 	<-signal
+	if r.HtmlPageTerm == "" {
+		return
+	}
 	langs, err := parseLanguagesBreakDown(r.HtmlPageTerm)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
 	r.LanguagesBreakDown = langs
@@ -120,14 +137,17 @@ func (r *Repo) loadLanguageBreakdown(errChan chan<- error, wg *sync.WaitGroup, s
 func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
 	defer wg.Done()
 	<-signal
+	if r.HtmlPageTerm == "" {
+		return
+	}
 	readmeText, err := getReadMeHtml(r.HtmlPageTerm)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
 	readme, err := parseReadMeHtmlIntoMarkdown(readmeText)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		return
 	}
 	readme = utils.CleanMarkdown(readme)
@@ -139,7 +159,7 @@ func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup, signal
 	url := "https://github.com/" + r.Owner + "/" + r.Name
 	res, err := Fetch(url)
 	if err != nil {
-		errChan <- err
+		sendErrorNonBlocking(errChan, err)
 		close(signal)
 		return
 	}

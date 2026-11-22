@@ -53,13 +53,28 @@ func SaveCache(repos []ghclient.Repo, path string, cfg *flags.CmdConfig) error {
 		allCache = append(allCache, newCache)
 	}
 
-	f, err = os.Create(path)
+	tmpPath := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
+	tmpFile, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	return json.NewEncoder(f).Encode(allCache)
+	encodeErr := json.NewEncoder(tmpFile).Encode(allCache)
+	closeErr := tmpFile.Close()
+	if encodeErr != nil {
+		_ = os.Remove(tmpPath)
+		return encodeErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return closeErr
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(path)
+		return os.Rename(tmpPath, path)
+	}
+	return nil
 }
 
 func LoadCache(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {

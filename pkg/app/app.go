@@ -56,10 +56,7 @@ func cacheFetcher(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
 			return []ghclient.Repo{}, err
 		}
 
-		err = cache.SaveCache(repos, path, cfg)
-		if err != nil {
-			return repos, err
-		}
+		_ = cache.SaveCache(repos, path, cfg)
 		return repos, nil
 	}
 	return cacheRepos, nil
@@ -71,9 +68,6 @@ func noCacheFetcher(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) 
 		return []ghclient.Repo{}, err
 	}
 
-	err = cache.SaveCache(repos, path, cfg)
-	if err != nil {
-		return []ghclient.Repo{}, err
-	}
+	_ = cache.SaveCache(repos, path, cfg)
 	return repos, nil
 }

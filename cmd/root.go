@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const defauleLimit = 2202
+const defaultLimit = 2202
 
 var limit int
 var since string
@@ -60,7 +60,7 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Flags().IntVarP(&limit, "limit", "l", defauleLimit, "Set the limit repos")
+	rootCmd.Flags().IntVarP(&limit, "limit", "l", defaultLimit, "Set the limit repos")
 	rootCmd.Flags().StringVarP(&since, "since", "r", "daily", "Date range (daily/weekly/monthly)")
 	rootCmd.Flags().StringVarP(&lang, "lang", "L", "All", "Filter by programming language")
 	rootCmd.Flags().BoolVar(&noCache, "no-cache", false, "Ignore cached data and fetch fresh")

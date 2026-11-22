@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
-func Fetch(url string) ([]byte, error) {
-	client := &http.Client{}
+var defaultHTTPClient = &http.Client{
+	Timeout: 20 * time.Second,
+}
 
+func Fetch(url string) ([]byte, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -25,7 +28,7 @@ func Fetch(url string) ([]byte, error) {
 		req.Header.Set("Authorization", "token "+token)
 	}
 
-	res, err := client.Do(req)
+	res, err := defaultHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

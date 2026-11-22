@@ -31,6 +31,14 @@ func parseTrendingPage(html string) (RepoList, error) {
 			owner = strings.ReplaceAll(parts[0], " ", "")
 		}
 		url, _ := s.Find("h2 a").Attr("href")
+		if owner == "" || repoName == "" {
+			cleanHref := strings.Trim(url, "/")
+			parts := strings.Split(cleanHref, "/")
+			if len(parts) >= 2 {
+				owner = parts[0]
+				repoName = parts[1]
+			}
+		}
 		description := strings.TrimSpace(s.Find("p").Text())
 		lang := strings.TrimSpace(s.Find("span[itemprop='programmingLanguage']").Text())
 		stars := strings.TrimSpace(s.Find("a[href$='/stargazers']").First().Text())

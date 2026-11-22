@@ -2,6 +2,7 @@ package ghclient
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
@@ -11,15 +12,15 @@ import (
 var fetchUserReposHook = Fetch
 
 func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
-	url := "https://github.com/trending"
-	if cfg.Language != "All" {
-		url += "/" + strings.ToLower(cfg.Language)
+	urlStr := "https://github.com/trending"
+	if cfg.Language != "All" && strings.TrimSpace(cfg.Language) != "" {
+		urlStr += "/" + url.PathEscape(strings.ToLower(strings.TrimSpace(cfg.Language)))
 	}
 	if cfg.Since != "daily" {
-		url += "?since=" + string(cfg.Since)
+		urlStr += "?since=" + url.QueryEscape(string(cfg.Since))
 	}
 
-	res, err := Fetch(url)
+	res, err := Fetch(urlStr)
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +30,14 @@ func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
 	repos, err := parseTrendingPage(html)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.Limit > 0 && len(repos) > cfg.Limit {
+		repos = repos[:cfg.Limit]
+	}
+
+	for i := range repos {
+		repos[i].Index = i
 	}
 
 	err = repos.loadDetails()
@@ -56,9 +65,9 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 	maxPages := 5
 
 	for len(allRepos) < limit && page <= maxPages {
-		u := fmt.Sprintf("https://github.com/%s?tab=repositories&page=%d", username, page)
+		u := fmt.Sprintf("https://github.com/%s?tab=repositories&page=%d", url.PathEscape(username), page)
 		if cfg.Language != "" && cfg.Language != "All" {
-			u += "&language=" + strings.ToLower(cfg.Language)
+			u += "&language=" + url.QueryEscape(strings.ToLower(strings.TrimSpace(cfg.Language)))
 		}
 
 		res, err := fetchUserReposHook(u)
