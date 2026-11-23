@@ -111,18 +111,20 @@ func (m Model) renderMetricsLanguagesAndCommits(totalWidth, totalHeight int, th 
 	if len(commits) == 0 {
 		commitRows = append(commitRows, lipgloss.NewStyle().Foreground(th.Muted).Render("· No recent commits"))
 	} else {
+		sep := "  "
 		for _, c := range commits {
 			hashStyle := lipgloss.NewStyle().Foreground(th.Accent).Bold(true).Render(c.Hash)
 			msg := c.Message
-			maxMsgW := lineWidth - lipgloss.Width(hashStyle) - 1
-			if maxMsgW > 3 && lipgloss.Width(msg) > maxMsgW {
+			maxMsgW := lineWidth - lipgloss.Width(hashStyle) - lipgloss.Width(sep)
+			if maxMsgW > 4 && lipgloss.Width(msg) > maxMsgW {
 				runes := []rune(msg)
-				if len(runes) > maxMsgW {
-					msg = string(runes[:maxMsgW-2]) + ".."
+				for len(runes) > 0 && lipgloss.Width(string(runes)+"...") > maxMsgW {
+					runes = runes[:len(runes)-1]
 				}
+				msg = string(runes) + "..."
 			}
 			msgStyle := lipgloss.NewStyle().Foreground(th.Text).Render(msg)
-			commitRows = append(commitRows, hashStyle+" "+msgStyle)
+			commitRows = append(commitRows, hashStyle+sep+msgStyle)
 		}
 	}
 
@@ -137,13 +139,18 @@ func (m Model) renderMetricsLanguagesAndCommits(totalWidth, totalHeight int, th 
 	// Line allocation:
 	// Metrics gets up to 4 lines
 	// Languages gets 2 lines (bar + dots)
-	// Commits gets remainder
+	// Blank breathing room above commits divider gets 1 line if space permits
+	// Commits gets the entire remainder to fill the vertical panel
 	numMetrics := min(4, max(1, availLines/3))
 	numLang := 2
 	if availLines < 6 {
 		numLang = 1
 	}
-	numCommits := availLines - numMetrics - numLang
+	blankSpace := 0
+	if availLines >= 8 {
+		blankSpace = 1
+	}
+	numCommits := availLines - numMetrics - numLang - blankSpace
 	if numCommits < 1 {
 		numCommits = 1
 	}
@@ -160,8 +167,11 @@ func (m Model) renderMetricsLanguagesAndCommits(totalWidth, totalHeight int, th 
 	if numLang >= 2 {
 		allBodyLines = append(allBodyLines, wrapLine(dots))
 	}
+	if blankSpace > 0 {
+		allBodyLines = append(allBodyLines, wrapLine(""))
+	}
 
-	// Add commits divider
+	// Add commits divider and fill with commits
 	allBodyLines = append(allBodyLines, commitsDivider)
 	for i := 0; i < numCommits; i++ {
 		if i < len(commitRows) {

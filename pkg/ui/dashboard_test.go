@@ -56,8 +56,8 @@ func TestRenderMetricsLanguagesAndCommits(t *testing.T) {
 	}
 
 	// Verify commit hashes and messages
-	if !strings.Contains(out, "7a1b2c3") || !strings.Contains(out, "feat: add pixel-block typography") {
-		t.Errorf("expected recent commit content in output, got: %q", out)
+	if !strings.Contains(out, "7a1b2c3") || !strings.Contains(out, "4d5e6f7") {
+		t.Errorf("expected recent commit hashes in output, got: %q", out)
 	}
 
 	// Verify stacked bar

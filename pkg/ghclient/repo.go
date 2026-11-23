@@ -101,7 +101,7 @@ func fetchCommitsFromAPI(owner, repo string) ([]Commit, error) {
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("invalid owner or repo")
 	}
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/commits?per_page=6", githubAPIBaseURL, url.PathEscape(owner), url.PathEscape(repo))
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/commits?per_page=15", githubAPIBaseURL, url.PathEscape(owner), url.PathEscape(repo))
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return nil, err
@@ -343,7 +343,7 @@ func (r *Repo) loadCommits(errChan chan<- error, wg *sync.WaitGroup, signal <-ch
 		if err == nil {
 			var parsed []Commit
 			doc.Find("a[href*='/commit/']").Each(func(i int, s *goquery.Selection) {
-				if len(parsed) >= 6 {
+				if len(parsed) >= 15 {
 					return
 				}
 				href, _ := s.Attr("href")
