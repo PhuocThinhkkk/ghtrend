@@ -26,15 +26,36 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 	}
 
 	var avatar string
-	if m.userProfile.AvatarHalfBlock != "" {
-		storedW := lipgloss.Width(strings.Split(m.userProfile.AvatarHalfBlock, "\n")[0])
-		if storedW <= usableW-16 {
-			avatar = m.userProfile.AvatarHalfBlock
-		} else {
-			avatar = ascii.FallbackSilhouetteHalfBlock(avatarW, avatarH)
+	if m.avatarMode == AvatarModeBraille {
+		if m.userProfile.AvatarBraille != "" {
+			storedW := lipgloss.Width(strings.Split(m.userProfile.AvatarBraille, "\n")[0])
+			if storedW <= usableW-16 {
+				avatar = m.userProfile.AvatarBraille
+			}
+		}
+		if avatar == "" {
+			if m.userProfile.AvatarURL != "" {
+				m.userProfile.AvatarBraille = ascii.AvatarToBraille(m.userProfile.AvatarURL, avatarW, avatarH)
+				avatar = m.userProfile.AvatarBraille
+			} else {
+				avatar = ascii.FallbackSilhouetteBraille(avatarW, avatarH)
+			}
 		}
 	} else {
-		avatar = ascii.FallbackSilhouetteHalfBlock(avatarW, avatarH)
+		if m.userProfile.AvatarHalfBlock != "" {
+			storedW := lipgloss.Width(strings.Split(m.userProfile.AvatarHalfBlock, "\n")[0])
+			if storedW <= usableW-16 {
+				avatar = m.userProfile.AvatarHalfBlock
+			}
+		}
+		if avatar == "" {
+			if m.userProfile.AvatarURL != "" {
+				m.userProfile.AvatarHalfBlock = ascii.AvatarToHalfBlock(m.userProfile.AvatarURL, avatarW, avatarH)
+				avatar = m.userProfile.AvatarHalfBlock
+			} else {
+				avatar = ascii.FallbackSilhouetteHalfBlock(avatarW, avatarH)
+			}
+		}
 	}
 
 	actualAvatarW := lipgloss.Width(strings.Split(avatar, "\n")[0])
