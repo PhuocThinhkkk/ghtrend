@@ -74,17 +74,29 @@ func TestImageToHalfBlock(t *testing.T) {
 		t.Errorf("expected ANSI 24-bit TrueColor in output")
 	}
 
-	// Test dark background clamping
+	// Test transparent background clamping
+	transSrc := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 10; x++ {
+			transSrc.Set(x, y, color.RGBA{R: 0, G: 0, B: 0, A: 0}) // Transparent
+		}
+	}
+	transOut := ImageToHalfBlock(transSrc, 10, 5)
+	// Transparent pixels should clamp to empty space ' ' without ANSI color codes
+	if strings.Contains(transOut, "\x1b[38;2;") {
+		t.Errorf("transparent pixels should clamp to empty spaces, got: %q", transOut)
+	}
+
+	// Test dark opaque pixels (hair, shadows): should preserve full detail and ANSI colors without stripes
 	darkSrc := image.NewRGBA(image.Rect(0, 0, 10, 10))
 	for y := 0; y < 10; y++ {
 		for x := 0; x < 10; x++ {
-			darkSrc.Set(x, y, color.RGBA{R: 5, G: 5, B: 5, A: 255}) // Below threshold 18
+			darkSrc.Set(x, y, color.RGBA{R: 5, G: 5, B: 5, A: 255})
 		}
 	}
 	darkOut := ImageToHalfBlock(darkSrc, 10, 5)
-	// Dark pixels should clamp to empty space ' ' without ANSI color codes
-	if strings.Contains(darkOut, "\x1b[38;2;") {
-		t.Errorf("dark background pixels should clamp to empty spaces, got: %q", darkOut)
+	if !strings.Contains(darkOut, "\x1b[38;2;") {
+		t.Errorf("dark opaque pixels should render smoothly with TrueColor, got: %q", darkOut)
 	}
 
 	// Nil image should produce fallback silhouette
