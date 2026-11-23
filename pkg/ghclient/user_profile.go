@@ -137,27 +137,10 @@ func scrapeUserProfile(username string, profile *UserProfile) error {
 		profile.Blog = blog
 	}
 
-	// Extract total contributions in the last year
-	doc.Find("h2.f4.text-normal").Each(func(i int, s *goquery.Selection) {
-		t := strings.TrimSpace(s.Text())
-		if strings.Contains(strings.ToLower(t), "contributions in the last year") {
-			parts := strings.Fields(t)
-			if len(parts) > 0 {
-				profile.TotalContributions = parts[0]
-			}
-		}
-	})
-
-	// Extract contribution calendar days (levels 0-4)
-	doc.Find("td.ContributionCalendar-day, rect.ContributionCalendar-day").Each(func(i int, s *goquery.Selection) {
-		levelStr, exists := s.Attr("data-level")
-		if exists && levelStr != "" {
-			var lvl int
-			if _, err := fmt.Sscanf(levelStr, "%d", &lvl); err == nil {
-				profile.ContributionDays = append(profile.ContributionDays, lvl)
-			}
-		}
-	})
+	parseContributionsDoc(doc, profile)
+	if len(profile.ContributionDays) == 0 {
+		fetchContributionsFragment(username, profile)
+	}
 
 	// Extract pinned repositories (in order)
 	pinnedSet := make(map[string]bool)
@@ -170,6 +153,60 @@ func scrapeUserProfile(username string, profile *UserProfile) error {
 	})
 
 	return nil
+}
+
+func fetchContributionsFragment(username string, profile *UserProfile) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	fragmentURL := fmt.Sprintf("https://github.com/users/%s/contributions", url.PathEscape(username))
+	req, err := http.NewRequestWithContext(ctx, "GET", fragmentURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "ghtrend")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+	resp, err := apiHTTPClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return
+	}
+
+	parseContributionsDoc(doc, profile)
+}
+
+func parseContributionsDoc(doc *goquery.Document, profile *UserProfile) {
+	if profile.TotalContributions == "" {
+		doc.Find("h2.f4.text-normal").Each(func(i int, s *goquery.Selection) {
+			t := strings.TrimSpace(s.Text())
+			if strings.Contains(strings.ToLower(t), "contributions in the last year") {
+				parts := strings.Fields(t)
+				if len(parts) > 0 {
+					profile.TotalContributions = parts[0]
+				}
+			}
+		})
+	}
+
+	doc.Find("td.ContributionCalendar-day, rect.ContributionCalendar-day").Each(func(i int, s *goquery.Selection) {
+		levelStr, exists := s.Attr("data-level")
+		if exists && levelStr != "" {
+			var lvl int
+			if _, err := fmt.Sscanf(levelStr, "%d", &lvl); err == nil {
+				profile.ContributionDays = append(profile.ContributionDays, lvl)
+			}
+		}
+	})
 }
 
 func fetchUserProfileFromAPI(username string, profile *UserProfile) error {

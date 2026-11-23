@@ -26,15 +26,19 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 	}
 
 	var avatar string
-	if m.userProfile.AvatarURL != "" {
-		avatar = ascii.AvatarToHalfBlock(m.userProfile.AvatarURL, avatarW, avatarH)
-	} else if m.userProfile.AvatarHalfBlock != "" {
-		avatar = m.userProfile.AvatarHalfBlock
+	if m.userProfile.AvatarHalfBlock != "" {
+		storedW := lipgloss.Width(strings.Split(m.userProfile.AvatarHalfBlock, "\n")[0])
+		if storedW <= usableW-16 {
+			avatar = m.userProfile.AvatarHalfBlock
+		} else {
+			avatar = ascii.FallbackSilhouetteHalfBlock(avatarW, avatarH)
+		}
 	} else {
 		avatar = ascii.FallbackSilhouetteHalfBlock(avatarW, avatarH)
 	}
 
-	rightW := usableW - avatarW - 2
+	actualAvatarW := lipgloss.Width(strings.Split(avatar, "\n")[0])
+	rightW := usableW - actualAvatarW - 2
 	if rightW < 14 {
 		rightW = usableW
 	}
@@ -130,8 +134,9 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 	}
 	if m.userProfile.Blog != "" {
 		blog := m.userProfile.Blog
-		if len(blog) > 22 {
-			blog = blog[:20] + ".."
+		runes := []rune(blog)
+		if len(runes) > 22 {
+			blog = string(runes[:20]) + ".."
 		}
 		meta = append(meta, fmt.Sprintf("🔗 %s", blog))
 	}
@@ -158,7 +163,12 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 	}
 
 	// Compact GitHub Contribution Heatmap grid
-	if rightW >= 22 && innerH >= 11 {
+	currentDetails := lipgloss.JoinVertical(lipgloss.Left, infoItems...)
+	detailsH := lipgloss.Height(currentDetails)
+	remainingH := innerH - detailsH
+
+	// Heatmap needs at least 5 lines (title + 4 grid rows)
+	if rightW >= 22 && remainingH >= 5 {
 		maxWeeks := min(12, max(4, rightW/2-2))
 		heatmap := renderContributionHeatmap(
 			m.userProfile.ContributionDays,
@@ -185,6 +195,10 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 }
 
 func renderContributionHeatmap(days []int, totalContr string, publicRepos, maxWeeks int, th theme.Theme) string {
+	if len(days) == 0 {
+		return ""
+	}
+
 	levelColors := []lipgloss.Color{
 		lipgloss.Color("#24283b"), // 0: dark slate
 		lipgloss.Color("#3d59a1"), // 1: deep blue
@@ -202,27 +216,8 @@ func renderContributionHeatmap(days []int, totalContr string, publicRepos, maxWe
 	grid := make([]int, totalCells)
 	if len(days) >= totalCells {
 		copy(grid, days[len(days)-totalCells:])
-	} else if len(days) > 0 {
-		copy(grid[totalCells-len(days):], days)
 	} else {
-		// Deterministic activity pattern based on publicRepos
-		seed := publicRepos*37 + 19
-		for i := 0; i < totalCells; i++ {
-			seed = (seed*1103515245 + 12345) & 0x7fffffff
-			mod := seed % 10
-			switch {
-			case mod >= 7:
-				grid[i] = 0
-			case mod >= 4:
-				grid[i] = 1
-			case mod >= 2:
-				grid[i] = 2
-			case mod == 1:
-				grid[i] = 3
-			default:
-				grid[i] = 4
-			}
-		}
+		copy(grid[totalCells-len(days):], days)
 	}
 
 	title := "Activity Heatmap"

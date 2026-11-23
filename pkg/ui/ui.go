@@ -458,8 +458,7 @@ func (m *Model) recalculateLayout(width, height int) {
 		rightWidth := width - leftWidth
 
 		if m.userProfile != nil {
-			profileH := max(6, min(16, availH*46/100))
-			readmeH := availH - profileH
+			_, readmeH := userProfileLayoutHeights(availH)
 
 			tableHeight := max(6, min(12, availH*38/100))
 			lowerHeight := availH - tableHeight
@@ -502,6 +501,12 @@ func (m *Model) recalculateLayout(width, height int) {
 
 	m.setFileList()
 	m.updateReadmeContent()
+}
+
+func userProfileLayoutHeights(availH int) (profileH, readmeH int) {
+	profileH = max(8, min(15, availH*44/100))
+	readmeH = availH - profileH
+	return profileH, readmeH
 }
 
 func (m *Model) updateReadmeContent() {
@@ -658,8 +663,7 @@ func (m Model) renderDashboardView(width, height int) string {
 		rightWidth := width - leftWidth
 
 		if m.userProfile != nil {
-			profileH := max(8, min(13, availH*42/100))
-			readmeH := availH - profileH
+			profileH, readmeH := userProfileLayoutHeights(availH)
 
 			profileCard := m.renderUserProfileCard(leftWidth, profileH, m.theme)
 

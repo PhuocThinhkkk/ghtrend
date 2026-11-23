@@ -106,6 +106,8 @@ func TestFallbackSilhouetteHalfBlock(t *testing.T) {
 }
 
 func TestAvatarToHalfBlock_WithMockServer(t *testing.T) {
+	t.Setenv("GHTREND_CACHE_DIR", t.TempDir())
+
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	for y := 0; y < 64; y++ {
 		for x := 0; x < 64; x++ {

@@ -79,6 +79,8 @@ func TestFallbackSilhouetteASCII(t *testing.T) {
 }
 
 func TestAvatarToASCII_WithMockServer(t *testing.T) {
+	t.Setenv("GHTREND_CACHE_DIR", t.TempDir())
+
 	// Generate mock 20x20 PNG image
 	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
 	for y := 0; y < 20; y++ {

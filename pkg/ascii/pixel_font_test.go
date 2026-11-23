@@ -75,6 +75,15 @@ func TestRenderPixelBanner(t *testing.T) {
 	if emptyLines[0] != "" || emptyLines[1] != "" || emptyLines[2] != "" {
 		t.Errorf("empty text should return empty lines")
 	}
+
+	// Test unsupported characters (e.g. CJK names)
+	unsupportedLines := RenderPixelBanner("李雷", "#a9b1d6", "#7aa2f7", "#414868")
+	if unsupportedLines[0] != "" || unsupportedLines[1] != "" || unsupportedLines[2] != "" {
+		t.Errorf("unsupported characters should return empty lines, got %+v", unsupportedLines)
+	}
+	if out := RenderPixelBannerString("李雷", "#a9b1d6", "#7aa2f7", "#414868", 0); out != "" {
+		t.Errorf("unsupported characters should return empty string from RenderPixelBannerString, got %q", out)
+	}
 }
 
 func TestRenderPixelBannerString_MaxCols(t *testing.T) {

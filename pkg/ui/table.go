@@ -18,19 +18,23 @@ func CalculateTableColumns(width int) []table.Column {
 }
 
 func CalculateTableColumnsForMode(width int, isUser bool) []table.Column {
+	// Account for 2 border characters + 2 padding cells per column (5 columns * 2 = 10 cells)
 	usable := width - 12
-	if usable < 30 {
-		usable = 30
+	if usable < 22 {
+		usable = 22
 	}
 
+	starsW := max(3, usable*8/100)
+	forksW := max(3, usable*8/100)
+	langW := max(5, usable*14/100)
+	rem := usable - (starsW + forksW + langW)
+
 	if isUser {
-		repoW := max(14, usable*32/100)
-		descW := max(14, usable*36/100)
-		starsW := max(5, usable*10/100)
-		forksW := max(5, usable*10/100)
-		langW := usable - (repoW + descW + starsW + forksW)
-		if langW < 6 {
-			langW = 6
+		repoW := max(8, rem*45/100)
+		descW := rem - repoW
+		if descW < 8 {
+			descW = 8
+			repoW = rem - descW
 		}
 		return []table.Column{
 			{Title: "Repo name", Width: repoW},
@@ -41,13 +45,11 @@ func CalculateTableColumnsForMode(width int, isUser bool) []table.Column {
 		}
 	}
 
-	ownerW := max(8, usable*20/100)
-	repoW := max(12, usable*36/100)
-	starsW := max(5, usable*12/100)
-	forksW := max(5, usable*12/100)
-	langW := usable - (ownerW + repoW + starsW + forksW)
-	if langW < 6 {
-		langW = 6
+	ownerW := max(7, rem*35/100)
+	repoW := rem - ownerW
+	if repoW < 8 {
+		repoW = 8
+		ownerW = rem - repoW
 	}
 
 	return []table.Column{

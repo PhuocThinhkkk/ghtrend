@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 func TestScrapeUserProfile_Success(t *testing.T) {
@@ -159,5 +161,40 @@ func TestPinnedReposReordering(t *testing.T) {
 	}
 	if reordered[2].Pinned || reordered[3].Pinned {
 		t.Errorf("expected remaining repos not to be pinned")
+	}
+}
+
+func TestParseContributionsDoc_WithFragmentFixture(t *testing.T) {
+	fixture := `<div>
+		<h2 class="f4 text-normal">
+			4,039 contributions in the last year
+		</h2>
+		<table class="ContributionCalendar-grid">
+			<tbody>
+				<tr>
+					<td class="ContributionCalendar-day" data-level="0"></td>
+					<td class="ContributionCalendar-day" data-level="1"></td>
+					<td class="ContributionCalendar-day" data-level="4"></td>
+				</tr>
+			</tbody>
+		</table>
+	</div>`
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(fixture))
+	if err != nil {
+		t.Fatalf("failed to parse fixture doc: %v", err)
+	}
+
+	profile := &UserProfile{}
+	parseContributionsDoc(doc, profile)
+
+	if profile.TotalContributions != "4,039" {
+		t.Errorf("expected TotalContributions '4,039', got %q", profile.TotalContributions)
+	}
+	if len(profile.ContributionDays) != 3 {
+		t.Fatalf("expected 3 contribution days, got %d", len(profile.ContributionDays))
+	}
+	if profile.ContributionDays[0] != 0 || profile.ContributionDays[1] != 1 || profile.ContributionDays[2] != 4 {
+		t.Errorf("unexpected contribution days: %+v", profile.ContributionDays)
 	}
 }

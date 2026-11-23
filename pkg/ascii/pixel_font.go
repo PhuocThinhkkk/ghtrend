@@ -362,6 +362,19 @@ func RenderPixelBanner(text string, color1, color2, shadowColor string) [3]strin
 		}
 	}
 
+	hasRenderable := false
+	for _, sc := range styledChars {
+		if sc.r != ' ' {
+			if _, exists := fontMap[sc.r]; exists {
+				hasRenderable = true
+				break
+			}
+		}
+	}
+	if !hasRenderable {
+		return [3]string{"", "", ""}
+	}
+
 	var rowBuilders [3]strings.Builder
 
 	for i, sc := range styledChars {
@@ -413,6 +426,9 @@ func RenderPixelBannerString(text string, color1, color2, shadowColor string, ma
 		for len(runes) > 0 {
 			candidate := string(runes)
 			lines := RenderPixelBanner(candidate, color1, color2, shadowColor)
+			if lines[0] == "" {
+				return ""
+			}
 			width := visibleWidth(lines[0])
 			if width <= maxCols {
 				return lines[0] + "\n" + lines[1] + "\n" + lines[2]
@@ -423,6 +439,9 @@ func RenderPixelBannerString(text string, color1, color2, shadowColor string, ma
 	}
 
 	lines := RenderPixelBanner(text, color1, color2, shadowColor)
+	if lines[0] == "" && lines[1] == "" && lines[2] == "" {
+		return ""
+	}
 	return lines[0] + "\n" + lines[1] + "\n" + lines[2]
 }
 

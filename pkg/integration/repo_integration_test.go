@@ -22,8 +22,7 @@ func TestParseRootInfoAgainstGitHub(t *testing.T) {
 		return
 	}
 	if err := json.Unmarshal(res, &apiEntries); err != nil {
-		t.Skipf("Skipping integration test: Failed to decode GitHub API JSON: %v", err)
-		return
+		t.Fatalf("Failed to decode GitHub API JSON: %v", err)
 	}
 
 	url = "https://github.com/golang/go"

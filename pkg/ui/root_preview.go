@@ -75,19 +75,7 @@ func formatFileSize(name string, t string) string {
 	if t == "dir" {
 		return "dir"
 	}
-	var h uint32 = 2166136261
-	for _, c := range []byte(name) {
-		h ^= uint32(c)
-		h *= 16777619
-	}
-	val := (h % 900) + 100
-	if strings.HasSuffix(name, ".md") || strings.HasSuffix(name, ".txt") {
-		return fmt.Sprintf("%.1f KB", float64(val%45+15)/10.0)
-	}
-	if val > 500 {
-		return fmt.Sprintf("%.1f KB", float64(val)/100.0)
-	}
-	return fmt.Sprintf("%d B", val)
+	return ""
 }
 
 func RenderFileList(m list.Model, state activeComponent, width, height int, th theme.Theme) string {
@@ -153,36 +141,52 @@ func (d simpleDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 	rightW := lipgloss.Width(right)
 	availW := totalW - 4 // account for left/right margins inside border
 
-	if leftW+rightW > availW && availW > rightW+4 {
+	if leftW+rightW+1 > availW && availW > rightW+4 {
 		maxLeft := availW - rightW - 2
-		runes := []rune(left)
-		if len(runes) > maxLeft {
-			left = string(runes[:maxLeft-2]) + ".."
+		if lipgloss.Width(left) > maxLeft && maxLeft > 3 {
+			runes := []rune(left)
+			for len(runes) > 0 && lipgloss.Width(string(runes)+"..") > maxLeft {
+				runes = runes[:len(runes)-1]
+			}
+			left = string(runes) + ".."
 			leftW = lipgloss.Width(left)
 		}
 	}
 
-	gap := availW - leftW - rightW
-	if gap < 1 {
-		gap = 1
-	}
-
-	mutedCol := d.mutedColor
-	if mutedCol == nil {
-		mutedCol = lipgloss.Color("#565f89")
-	}
-	rightStyled := lipgloss.NewStyle().Foreground(mutedCol).Render(right)
-
 	var line string
-	if index == m.Index() {
-		col := d.selectedColor
-		if col == nil {
-			col = lipgloss.Color("#7aa2f7")
+	if right == "" {
+		if index == m.Index() {
+			col := d.selectedColor
+			if col == nil {
+				col = lipgloss.Color("#7aa2f7")
+			}
+			leftStyled := lipgloss.NewStyle().Foreground(col).Bold(true).Render(left)
+			line = " " + leftStyled
+		} else {
+			line = " " + left
 		}
-		leftStyled := lipgloss.NewStyle().Foreground(col).Bold(true).Render(left)
-		line = " " + leftStyled + strings.Repeat(" ", gap) + rightStyled
 	} else {
-		line = " " + left + strings.Repeat(" ", gap) + rightStyled
+		gap := availW - leftW - rightW - 1
+		if gap < 1 {
+			gap = 1
+		}
+
+		mutedCol := d.mutedColor
+		if mutedCol == nil {
+			mutedCol = lipgloss.Color("#565f89")
+		}
+		rightStyled := lipgloss.NewStyle().Foreground(mutedCol).Render(right)
+
+		if index == m.Index() {
+			col := d.selectedColor
+			if col == nil {
+				col = lipgloss.Color("#7aa2f7")
+			}
+			leftStyled := lipgloss.NewStyle().Foreground(col).Bold(true).Render(left)
+			line = " " + leftStyled + strings.Repeat(" ", gap) + rightStyled
+		} else {
+			line = " " + left + strings.Repeat(" ", gap) + rightStyled
+		}
 	}
 
 	fmt.Fprint(w, line)

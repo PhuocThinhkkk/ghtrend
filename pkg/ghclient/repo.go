@@ -368,10 +368,6 @@ func (r *Repo) loadCommits(errChan chan<- error, wg *sync.WaitGroup, signal <-ch
 			}
 		}
 	}
-
-	r.RecentCommits = []Commit{
-		{Hash: "main", Message: "Initial commit & release setup"},
-	}
 }
 
 func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup, signal chan<- struct{}) {
