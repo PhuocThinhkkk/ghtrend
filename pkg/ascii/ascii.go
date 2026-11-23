@@ -197,17 +197,15 @@ func fetchCachedAvatar(avatarURL string) (image.Image, error) {
 		return nil, err
 	}
 
-	// Save to disk asynchronously and atomically
-	go func(path string, fileBytes []byte) {
-		cacheDirMu.Lock()
-		defer cacheDirMu.Unlock()
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {
-			tmpFile := fmt.Sprintf("%s.tmp.%d", path, time.Now().UnixNano())
-			if err := os.WriteFile(tmpFile, fileBytes, 0644); err == nil {
-				_ = os.Rename(tmpFile, path)
-			}
+	// Save to disk cache atomically
+	cacheDirMu.Lock()
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err == nil {
+		tmpFile := fmt.Sprintf("%s.tmp.%d", cachePath, time.Now().UnixNano())
+		if err := os.WriteFile(tmpFile, data, 0644); err == nil {
+			_ = os.Rename(tmpFile, cachePath)
 		}
-	}(cachePath, data)
+	}
+	cacheDirMu.Unlock()
 
 	return img, nil
 }

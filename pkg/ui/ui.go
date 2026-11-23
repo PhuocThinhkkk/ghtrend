@@ -38,6 +38,13 @@ const (
 	readmeActive
 )
 
+type AvatarMode int
+
+const (
+	AvatarModeHalfBlock AvatarMode = iota
+	AvatarModeBraille
+)
+
 type Repo = ghclient.Repo
 type EntryInfor = ghclient.EntryInfor
 type ExtraInfor = ghclient.ExtraInfor
@@ -69,6 +76,7 @@ type Model struct {
 	hasMorePages     bool
 	loadingNextPage  bool
 	cursorDebounceID int
+	avatarMode       AvatarMode
 }
 
 type debounceCursorMsg struct {
@@ -280,6 +288,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q":
 			return m, tea.Quit
+		case "a":
+			if m.state == stateDashboard && m.userProfile != nil {
+				m.avatarMode = (m.avatarMode + 1) % 2
+				m.toastID++
+				id := m.toastID
+				if m.avatarMode == AvatarModeBraille {
+					m.toastMessage = "🖼 Avatar: Braille 4× detail mode (56×56)"
+				} else {
+					m.toastMessage = "🖼 Avatar: Full-color half-block mode (28×28)"
+				}
+				return m, clearToastCmd(id, 2*time.Second)
+			}
 		case "esc":
 			if m.state == stateDashboard && m.filterInput.Value() != "" {
 				m.filterInput.Reset()
@@ -439,6 +459,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if len(msg.repos) > 0 && msg.repos[0].UserProfile != nil {
 			m.userProfile = msg.repos[0].UserProfile
+			m.userProfile.RefreshAvatars(28, 14)
 		}
 
 		m.currentPage = 1
@@ -1294,6 +1315,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			formatRow("y", "Copy repository URL"),
 			"",
 			sectionStyle.Render("SETTINGS & SYSTEM"),
+			formatRow("a", "Toggle avatar (half-block ⇄ braille)"),
 			formatRow("t", "Color theme palette selector"),
 			formatRow("? / h", "Toggle this help shortcut dialog"),
 			formatRow("Esc", "Reset search / close modals"),
@@ -1306,6 +1328,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			formatRow("/", "Fuzzy search filter"),
 			formatRow("d / f", "Cycle Daily/Weekly/Monthly"),
 			formatRow("o / y", "Open browser / Copy URL"),
+			formatRow("a", "Toggle avatar"),
 			formatRow("t", "Theme selector"),
 			formatRow("? / Esc", "Close help / Clear filter"),
 			formatRow("q", "Quit"),
