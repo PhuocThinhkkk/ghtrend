@@ -18,16 +18,19 @@ func TestParseRootInfoAgainstGitHub(t *testing.T) {
 	var apiEntries []GitHubEntry
 	res, err := ghclient.Fetch(url)
 	if err != nil {
-		t.Fatalf("Failed to fetch GitHub API: %v", err)
+		t.Skipf("Skipping integration test: GitHub API unavailable or rate limited: %v", err)
+		return
 	}
 	if err := json.Unmarshal(res, &apiEntries); err != nil {
-		t.Fatalf("Failed to decode GitHub API JSON: %v", err)
+		t.Skipf("Skipping integration test: Failed to decode GitHub API JSON: %v", err)
+		return
 	}
 
 	url = "https://github.com/golang/go"
 	resp, err := ghclient.Fetch(url)
 	if err != nil {
-		t.Fatalf("Failed to fetch GitHub HTML: %v", err)
+		t.Skipf("Skipping integration test: GitHub HTML unavailable: %v", err)
+		return
 	}
 
 	parsedEntries, err := ghclient.ParseRootInfo(string(resp))
