@@ -147,27 +147,38 @@ func ImageToHalfBlock(img image.Image, width, height int) string {
 	scaled := ResizeImageCatmullRom(enhanced, pixelW, pixelH)
 	sharpened := SharpenImage(scaled)
 
+	bounds := sharpened.Bounds()
 	var sb strings.Builder
 
 	for y := 0; y < height; y++ {
-		topY := y * 2
-		botY := y*2 + 1
+		topY := bounds.Min.Y + y*2
+		botY := bounds.Min.Y + y*2 + 1
 
 		for x := 0; x < width; x++ {
-			cTop := sharpened.RGBAAt(x, topY)
-			cBot := sharpened.RGBAAt(x, botY)
+			srcX := bounds.Min.X + x
+
+			rT, gT, bT, aT := sharpened.At(srcX, topY).RGBA()
+			cTop := color.RGBA{R: uint8(rT >> 8), G: uint8(gT >> 8), B: uint8(bT >> 8), A: uint8(aT >> 8)}
+
+			var cBot color.RGBA
+			if botY < bounds.Max.Y {
+				rB, gB, bB, aB := sharpened.At(srcX, botY).RGBA()
+				cBot = color.RGBA{R: uint8(rB >> 8), G: uint8(gB >> 8), B: uint8(bB >> 8), A: uint8(aB >> 8)}
+			}
 
 			topEmpty := isPixelEmpty(cTop)
 			botEmpty := isPixelEmpty(cBot)
+			botIsBlack := cBot.R == 0 && cBot.G == 0 && cBot.B == 0
 
 			switch {
 			case topEmpty && botEmpty:
 				sb.WriteByte(' ')
-			case !topEmpty && botEmpty:
+			case !topEmpty && (botEmpty || botIsBlack):
 				sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▀\x1b[0m", cTop.R, cTop.G, cTop.B))
 			case topEmpty && !botEmpty:
 				sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▄\x1b[0m", cBot.R, cBot.G, cBot.B))
 			default:
+				// cBot is non-black and non-empty: output full-color half-block with background
 				sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm▀\x1b[0m",
 					cTop.R, cTop.G, cTop.B, cBot.R, cBot.G, cBot.B))
 			}
@@ -230,22 +241,31 @@ func FallbackSilhouetteHalfBlock(width, height int) string {
 		}
 	}
 
+	bounds := canvas.Bounds()
 	var sb strings.Builder
 	for y := 0; y < height; y++ {
-		topY := y * 2
-		botY := y*2 + 1
+		topY := bounds.Min.Y + y*2
+		botY := bounds.Min.Y + y*2 + 1
 
 		for x := 0; x < width; x++ {
-			cTop := canvas.RGBAAt(x, topY)
-			cBot := canvas.RGBAAt(x, botY)
+			srcX := bounds.Min.X + x
+			rT, gT, bT, aT := canvas.At(srcX, topY).RGBA()
+			cTop := color.RGBA{R: uint8(rT >> 8), G: uint8(gT >> 8), B: uint8(bT >> 8), A: uint8(aT >> 8)}
+
+			var cBot color.RGBA
+			if botY < bounds.Max.Y {
+				rB, gB, bB, aB := canvas.At(srcX, botY).RGBA()
+				cBot = color.RGBA{R: uint8(rB >> 8), G: uint8(gB >> 8), B: uint8(bB >> 8), A: uint8(aB >> 8)}
+			}
 
 			topEmpty := isPixelEmpty(cTop)
 			botEmpty := isPixelEmpty(cBot)
+			botIsBlack := cBot.R == 0 && cBot.G == 0 && cBot.B == 0
 
 			switch {
 			case topEmpty && botEmpty:
 				sb.WriteByte(' ')
-			case !topEmpty && botEmpty:
+			case !topEmpty && (botEmpty || botIsBlack):
 				sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▀\x1b[0m", cTop.R, cTop.G, cTop.B))
 			case topEmpty && !botEmpty:
 				sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▄\x1b[0m", cBot.R, cBot.G, cBot.B))
