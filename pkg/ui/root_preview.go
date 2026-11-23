@@ -25,11 +25,13 @@ func (m *Model) setFileList() {
 	items := []list.Item{}
 
 	tableCursor := m.table.Cursor()
-	if tableCursor < 0 || tableCursor >= len(m.repoList) {
+	repos := m.activeRepoList()
+	if tableCursor < 0 || tableCursor >= len(repos) {
+		m.list.SetItems(items)
 		return
 	}
 
-	dirs := m.repoList[tableCursor].RootInfor
+	dirs := repos[tableCursor].RootInfor
 
 	widthAllowed := m.list.Width() - 5
 	if widthAllowed < 10 {
