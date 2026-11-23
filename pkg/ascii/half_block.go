@@ -66,6 +66,66 @@ func ResizeImageCatmullRom(img image.Image, width, height int) *image.RGBA {
 	return dst
 }
 
+// SharpenImage applies an unsharp mask filter to restore micro-contrast and edge sharpness
+// after downsampling, ensuring facial features and outlines remain crisp.
+func SharpenImage(img *image.RGBA) *image.RGBA {
+	if img == nil {
+		return nil
+	}
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	minX, minY := bounds.Min.X, bounds.Min.Y
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	// 3x3 unsharp convolution kernel with center weight 5:
+	// [  0, -1,  0 ]
+	// [ -1,  5, -1 ]
+	// [  0, -1,  0 ]
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			srcX := minX + x
+			srcY := minY + y
+			if x == 0 || y == 0 || x == w-1 || y == h-1 {
+				dst.Set(x, y, img.At(srcX, srcY))
+				continue
+			}
+			cCenter := img.RGBAAt(srcX, srcY)
+			if cCenter.A < 32 {
+				dst.Set(x, y, cCenter)
+				continue
+			}
+
+			cTop := img.RGBAAt(srcX, srcY-1)
+			cBot := img.RGBAAt(srcX, srcY+1)
+			cLeft := img.RGBAAt(srcX-1, srcY)
+			cRight := img.RGBAAt(srcX+1, srcY)
+
+			r := 5*int(cCenter.R) - int(cTop.R) - int(cBot.R) - int(cLeft.R) - int(cRight.R)
+			g := 5*int(cCenter.G) - int(cTop.G) - int(cBot.G) - int(cLeft.G) - int(cRight.G)
+			b := 5*int(cCenter.B) - int(cTop.B) - int(cBot.B) - int(cLeft.B) - int(cRight.B)
+
+			maxC := int(cCenter.A)
+			dst.Set(x, y, color.RGBA{
+				R: uint8(clampInt(r, 0, maxC)),
+				G: uint8(clampInt(g, 0, maxC)),
+				B: uint8(clampInt(b, 0, maxC)),
+				A: cCenter.A,
+			})
+		}
+	}
+	return dst
+}
+
+func clampInt(v, minVal, maxVal int) int {
+	if v < minVal {
+		return minVal
+	}
+	if v > maxVal {
+		return maxVal
+	}
+	return v
+}
+
 // ImageToHalfBlock converts an image into a high-resolution ANSI truecolor string
 // using Unicode half-blocks ('▀', U+2580). Each character cell renders 2 vertical pixels,
 // meaning a width x height character grid displays a width x (height*2) square pixel resolution.
@@ -85,6 +145,7 @@ func ImageToHalfBlock(img image.Image, width, height int) string {
 
 	enhanced := EnhanceContrast(img, 1.15)
 	scaled := ResizeImageCatmullRom(enhanced, pixelW, pixelH)
+	sharpened := SharpenImage(scaled)
 
 	var sb strings.Builder
 
@@ -93,8 +154,8 @@ func ImageToHalfBlock(img image.Image, width, height int) string {
 		botY := y*2 + 1
 
 		for x := 0; x < width; x++ {
-			cTop := scaled.RGBAAt(x, topY)
-			cBot := scaled.RGBAAt(x, botY)
+			cTop := sharpened.RGBAAt(x, topY)
+			cBot := sharpened.RGBAAt(x, botY)
 
 			topEmpty := isPixelEmpty(cTop)
 			botEmpty := isPixelEmpty(cBot)
@@ -120,15 +181,10 @@ func ImageToHalfBlock(img image.Image, width, height int) string {
 }
 
 func isPixelEmpty(c color.RGBA) bool {
-	if c.A < 25 {
-		return true
-	}
-	// Clamp pure dark/background pixels to transparent spaces so the avatar
-	// has a clean silhouette without stray dots or noise.
-	if c.R < 18 && c.G < 18 && c.B < 18 {
-		return true
-	}
-	return false
+	// Only truly transparent pixels (alpha < 32) are treated as empty spaces.
+	// Dark/shadow pixels (hair, clothes, eyes) are fully rendered so no horizontal
+	// stripes or missing rows occur.
+	return c.A < 32
 }
 
 // FallbackSilhouetteHalfBlock generates a high-resolution, geometric user silhouette

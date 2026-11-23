@@ -99,8 +99,8 @@ func InitialTable(repos []Repo, limit int, th theme.Theme) table.Model {
 	return InitialTableWithMode(repos, limit, th, isUser)
 }
 
-func InitialTableWithMode(repos []Repo, limit int, th theme.Theme, isUser bool) table.Model {
-	columns := CalculateTableColumnsForMode(80, isUser)
+// BuildTableRows formats a slice of Repo into bubbles table.Row items.
+func BuildTableRows(repos []Repo, limit int, isUser bool) []table.Row {
 	var rows []table.Row
 
 	for _, repo := range repos {
@@ -144,6 +144,12 @@ func InitialTableWithMode(repos []Repo, limit int, th theme.Theme, isUser bool) 
 		}
 		limit--
 	}
+	return rows
+}
+
+func InitialTableWithMode(repos []Repo, limit int, th theme.Theme, isUser bool) table.Model {
+	columns := CalculateTableColumnsForMode(80, isUser)
+	rows := BuildTableRows(repos, limit, isUser)
 
 	t := table.New(
 		table.WithColumns(columns),

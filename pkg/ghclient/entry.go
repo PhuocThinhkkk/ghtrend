@@ -40,15 +40,47 @@ func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
 		repos[i].Index = i
 	}
 
-	err = repos.loadDetails()
-	if err != nil {
-		return nil, err
+	// Only load details for the first repo on initial launch;
+	// subsequent repositories load details on demand with debounce and caching.
+	if len(repos) > 0 {
+		_ = repos[0].LoadDetails()
 	}
 
 	return repos, nil
 }
 
-// GetUserRepositories fetches and populates detailed repository information for a specified GitHub user.
+// FetchUserRepositoriesPage fetches a single page of repositories for a GitHub user.
+// It returns the list of repositories on that page, a boolean indicating if more pages are likely available, and any error.
+func FetchUserRepositoriesPage(username, language string, page int) (RepoList, bool, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, false, fmt.Errorf("username cannot be empty")
+	}
+	if page < 1 {
+		page = 1
+	}
+
+	u := fmt.Sprintf("https://github.com/%s?tab=repositories&page=%d", url.PathEscape(username), page)
+	if language != "" && language != "All" {
+		u += "&language=" + url.QueryEscape(strings.ToLower(strings.TrimSpace(language)))
+	}
+
+	res, err := fetchUserReposHook(u)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to fetch page %d for user '%s': %w", page, username, err)
+	}
+
+	pageRepos, err := ParseUserRepositoriesPage(string(res))
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(pageRepos) >= 30
+	return pageRepos, hasMore, nil
+}
+
+// GetUserRepositories fetches and populates repository information for a specified GitHub user.
+// It loads page 1 initially (up to 20 repos) and populates details for the first repository.
 func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 	username := strings.TrimSpace(cfg.User)
 	if username == "" {
@@ -57,55 +89,14 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 
 	limit := cfg.Limit
 	if limit <= 0 {
-		limit = 30
+		limit = 20
 	}
 
-	var allRepos RepoList
-	seenRepos := make(map[string]bool)
-	page := 1
-	maxPages := 5
-
-	for len(allRepos) < limit && page <= maxPages {
-		u := fmt.Sprintf("https://github.com/%s?tab=repositories&page=%d", url.PathEscape(username), page)
-		if cfg.Language != "" && cfg.Language != "All" {
-			u += "&language=" + url.QueryEscape(strings.ToLower(strings.TrimSpace(cfg.Language)))
-		}
-
-		res, err := fetchUserReposHook(u)
-		if err != nil {
-			if len(allRepos) > 0 {
-				break
-			}
-			return nil, fmt.Errorf("failed to fetch repositories for user '%s': %w", username, err)
-		}
-
-		pageRepos, err := ParseUserRepositoriesPage(string(res))
-		if err != nil {
-			if len(allRepos) > 0 {
-				break
-			}
-			return nil, err
-		}
-
-		if len(pageRepos) == 0 {
-			break
-		}
-
-		for _, pageRepo := range pageRepos {
-			key := strings.ToLower(pageRepo.Owner + "/" + pageRepo.Name)
-			if !seenRepos[key] {
-				seenRepos[key] = true
-				allRepos = append(allRepos, pageRepo)
-			}
-		}
-
-		if len(pageRepos) < 30 {
-			break
-		}
-		page++
+	repos, _, err := FetchUserRepositoriesPage(username, cfg.Language, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch repositories for user '%s': %w", username, err)
 	}
-
-	if len(allRepos) == 0 {
+	if len(repos) == 0 {
 		return nil, fmt.Errorf("no repositories found for user '%s'", username)
 	}
 
@@ -118,7 +109,7 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 		}
 
 		repoMap := make(map[string]Repo)
-		for _, r := range allRepos {
+		for _, r := range repos {
 			repoMap[strings.ToLower(r.Name)] = r
 		}
 
@@ -131,29 +122,29 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 				pinnedList = append(pinnedList, r)
 			}
 		}
-		for _, r := range allRepos {
+		for _, r := range repos {
 			if !pinnedMap[strings.ToLower(r.Name)] {
 				regularList = append(regularList, r)
 			}
 		}
-		allRepos = append(pinnedList, regularList...)
+		repos = append(pinnedList, regularList...)
 	}
 
-	if len(allRepos) > limit {
-		allRepos = allRepos[:limit]
+	initialBatch := 20
+	if limit > 0 && limit < initialBatch {
+		initialBatch = limit
+	}
+	if limit <= initialBatch && len(repos) > initialBatch {
+		repos = repos[:initialBatch]
 	}
 
-	for i := range allRepos {
-		allRepos[i].Index = i
+	for i := range repos {
+		repos[i].Index = i
 	}
-	if len(allRepos) > 0 {
-		allRepos[0].UserProfile = profile
-	}
-
-	err := allRepos.loadDetails()
-	if err != nil {
-		return nil, err
+	if len(repos) > 0 {
+		repos[0].UserProfile = profile
+		_ = repos[0].LoadDetails()
 	}
 
-	return allRepos, nil
+	return repos, nil
 }

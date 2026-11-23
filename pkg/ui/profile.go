@@ -67,9 +67,38 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 		shadowCol = "#3b4252"
 	}
 
+	maxBannerW := rightW - 2
 	var bannerView string
-	if rightW >= 18 {
-		bannerView = ascii.RenderPixelBannerString(name, col1, col2, shadowCol, rightW)
+	if maxBannerW >= 16 {
+		candidate := strings.TrimSpace(name)
+		// 1. Try full name
+		if lines := ascii.RenderPixelBanner(candidate, col1, col2, shadowCol); lines[0] != "" && lipgloss.Width(lines[0]) <= maxBannerW {
+			bannerView = lines[0] + "\n" + lines[1] + "\n" + lines[2]
+		}
+
+		// 2. If full name is too wide, try shorter version (e.g. last two words)
+		if bannerView == "" {
+			words := strings.Fields(candidate)
+			if len(words) > 2 {
+				shortCandidate := strings.Join(words[len(words)-2:], " ")
+				if lines := ascii.RenderPixelBanner(shortCandidate, col1, col2, shadowCol); lines[0] != "" && lipgloss.Width(lines[0]) <= maxBannerW {
+					bannerView = lines[0] + "\n" + lines[1] + "\n" + lines[2]
+				}
+			}
+		}
+
+		// 3. If still too wide, try @username
+		if bannerView == "" && m.userProfile.Username != "" && m.userProfile.Username != candidate {
+			userCandidate := m.userProfile.Username
+			if lines := ascii.RenderPixelBanner(userCandidate, col1, col2, shadowCol); lines[0] != "" && lipgloss.Width(lines[0]) <= maxBannerW {
+				bannerView = lines[0] + "\n" + lines[1] + "\n" + lines[2]
+			}
+		}
+
+		// 4. If none of the complete candidates fit, try RenderPixelBannerString with maxBannerW
+		if bannerView == "" {
+			bannerView = ascii.RenderPixelBannerString(candidate, col1, col2, shadowCol, maxBannerW)
+		}
 	}
 	if bannerView == "" {
 		bannerView = lipgloss.NewStyle().
@@ -167,14 +196,15 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 	detailsH := lipgloss.Height(currentDetails)
 	remainingH := innerH - detailsH
 
-	// Heatmap needs at least 5 lines (title + 4 grid rows)
+	// Heatmap needs 5 lines (header row with title and legend + 4 grid rows)
 	if rightW >= 22 && remainingH >= 5 {
-		maxWeeks := min(12, max(4, rightW/2-2))
+		maxWeeks := min(28, max(6, (rightW-2)/2))
 		heatmap := renderContributionHeatmap(
 			m.userProfile.ContributionDays,
 			m.userProfile.TotalContributions,
 			m.userProfile.PublicRepos,
 			maxWeeks,
+			rightW,
 			th,
 		)
 		if heatmap != "" {
@@ -194,7 +224,7 @@ func (m Model) renderUserProfileCard(width, height int, th theme.Theme) string {
 	return WrapInTitledBorder(profileContent, width, height, "Profile", false, th)
 }
 
-func renderContributionHeatmap(days []int, totalContr string, publicRepos, maxWeeks int, th theme.Theme) string {
+func renderContributionHeatmap(days []int, totalContr string, publicRepos, maxWeeks, lineWidth int, th theme.Theme) string {
 	if len(days) == 0 {
 		return ""
 	}
@@ -226,6 +256,28 @@ func renderContributionHeatmap(days []int, totalContr string, publicRepos, maxWe
 	}
 	titleStyled := lipgloss.NewStyle().Foreground(th.Muted).Bold(true).Render(title)
 
+	legend := fmt.Sprintf("Less %s %s %s %s %s More",
+		lipgloss.NewStyle().Foreground(levelColors[0]).Render("▫"),
+		lipgloss.NewStyle().Foreground(levelColors[1]).Render("▪"),
+		lipgloss.NewStyle().Foreground(levelColors[2]).Render("▪"),
+		lipgloss.NewStyle().Foreground(levelColors[3]).Render("▪"),
+		lipgloss.NewStyle().Foreground(levelColors[4]).Render("▪"),
+	)
+	legendStyled := lipgloss.NewStyle().Foreground(th.Border).Render(legend)
+
+	// Right-align legend on the same line as the title
+	titleW := lipgloss.Width(titleStyled)
+	legendW := lipgloss.Width(legendStyled)
+	gap := lineWidth - titleW - legendW
+	var headerLine string
+	if gap >= 2 {
+		headerLine = titleStyled + strings.Repeat(" ", gap) + legendStyled
+	} else if lineWidth >= titleW {
+		headerLine = titleStyled
+	} else {
+		headerLine = lipgloss.NewStyle().MaxWidth(lineWidth).Render(titleStyled)
+	}
+
 	var rowLines []string
 	for r := 0; r < numRows; r++ {
 		var rowSb strings.Builder
@@ -251,17 +303,7 @@ func renderContributionHeatmap(days []int, totalContr string, publicRepos, maxWe
 		rowLines = append(rowLines, rowSb.String())
 	}
 
-	legend := fmt.Sprintf("Less %s %s %s %s %s More",
-		lipgloss.NewStyle().Foreground(levelColors[0]).Render("▫"),
-		lipgloss.NewStyle().Foreground(levelColors[1]).Render("▪"),
-		lipgloss.NewStyle().Foreground(levelColors[2]).Render("▪"),
-		lipgloss.NewStyle().Foreground(levelColors[3]).Render("▪"),
-		lipgloss.NewStyle().Foreground(levelColors[4]).Render("▪"),
-	)
-	legendStyled := lipgloss.NewStyle().Foreground(th.Border).Render(legend)
-
-	parts := []string{titleStyled}
+	parts := []string{headerLine}
 	parts = append(parts, rowLines...)
-	parts = append(parts, legendStyled)
 	return strings.Join(parts, "\n")
 }

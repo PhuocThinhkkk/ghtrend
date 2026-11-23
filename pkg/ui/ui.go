@@ -63,8 +63,64 @@ type Model struct {
 	userProfile    *ghclient.UserProfile
 	filtering      bool
 	filterInput    textinput.Model
-	toastMessage   string
-	toastID        int
+	toastMessage     string
+	toastID          int
+	currentPage      int
+	hasMorePages     bool
+	loadingNextPage  bool
+	cursorDebounceID int
+}
+
+type debounceCursorMsg struct {
+	id     int
+	cursor int
+}
+
+type repoDetailsLoadedMsg struct {
+	cursor int
+	owner  string
+	name   string
+	repo   Repo
+	err    error
+}
+
+type nextPageLoadedMsg struct {
+	page    int
+	repos   []Repo
+	hasMore bool
+	err     error
+}
+
+func debounceCursorCmd(id, cursor int, d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return debounceCursorMsg{id: id, cursor: cursor}
+	})
+}
+
+func fetchRepoDetailsCmd(cursor int, r Repo) tea.Cmd {
+	return func() tea.Msg {
+		repoCopy := r
+		err := repoCopy.LoadDetails()
+		return repoDetailsLoadedMsg{
+			cursor: cursor,
+			owner:  repoCopy.Owner,
+			name:   repoCopy.Name,
+			repo:   repoCopy,
+			err:    err,
+		}
+	}
+}
+
+func fetchNextPageCmd(username, language string, nextPage int) tea.Cmd {
+	return func() tea.Msg {
+		repos, hasMore, err := ghclient.FetchUserRepositoriesPage(username, language, nextPage)
+		return nextPageLoadedMsg{
+			page:    nextPage,
+			repos:   repos,
+			hasMore: hasMore,
+			err:     err,
+		}
+	}
 }
 
 func (m *Model) activeRepoList() []Repo {
@@ -96,7 +152,7 @@ func clearToastCmd(id int, d time.Duration) tea.Cmd {
 	})
 }
 
-func (m *Model) applyFilter() {
+func (m *Model) applyFilter() tea.Cmd {
 	query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
 	if query == "" {
 		m.filteredRepos = m.repoList
@@ -120,6 +176,17 @@ func (m *Model) applyFilter() {
 	}
 	m.table = InitialTableWithMode(m.filteredRepos, limit, m.theme, m.userProfile != nil)
 	m.recalculateLayout(m.width, m.height)
+
+	repos := m.activeRepoList()
+	cursor := m.table.Cursor()
+	if cursor >= 0 && cursor < len(repos) {
+		if !repos[cursor].DetailsLoaded {
+			m.cursorDebounceID++
+			dID := m.cursorDebounceID
+			return debounceCursorCmd(dID, cursor, 180*time.Millisecond)
+		}
+	}
+	return nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -196,8 +263,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filtering = false
 				m.filterInput.Reset()
 				m.filterInput.Blur()
-				m.applyFilter()
-				return m, nil
+				cmd := m.applyFilter()
+				return m, cmd
 			case "enter":
 				m.filtering = false
 				m.filterInput.Blur()
@@ -205,8 +272,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				var tiCmd tea.Cmd
 				m.filterInput, tiCmd = m.filterInput.Update(msg)
-				m.applyFilter()
-				return m, tiCmd
+				fCmd := m.applyFilter()
+				return m, tea.Batch(tiCmd, fCmd)
 			}
 		}
 
@@ -217,8 +284,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateDashboard && m.filterInput.Value() != "" {
 				m.filterInput.Reset()
 				m.filterInput.Blur()
-				m.applyFilter()
-				return m, nil
+				cmd := m.applyFilter()
+				return m, cmd
 			}
 		case "/":
 			if m.state == stateDashboard {
@@ -298,6 +365,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = newLoadingModel()
 				return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher))
 			}
+			if m.state == stateDashboard {
+				repo := m.getCursorRepo()
+				if !repo.DetailsLoaded && repo.Owner != "" && repo.Name != "" {
+					m.toastID++
+					id := m.toastID
+					m.toastMessage = "🔄 Retrying repo details..."
+					return m, tea.Batch(fetchRepoDetailsCmd(m.table.Cursor(), repo), clearToastCmd(id, 2*time.Second))
+				}
+			}
 		case "tab":
 			if m.state == stateDashboard {
 				m.active = (m.active + 1) % 3
@@ -365,6 +441,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.userProfile = msg.repos[0].UserProfile
 		}
 
+		m.currentPage = 1
+		if m.userProfile != nil && m.cfg != nil && m.cfg.User != "" {
+			maxLimit := 2202
+			if m.cfg.Limit > 0 {
+				maxLimit = m.cfg.Limit
+			}
+			m.hasMorePages = len(msg.repos) >= 15 && len(msg.repos) < maxLimit
+		} else {
+			m.hasMorePages = false
+		}
+		m.loadingNextPage = false
+
 		ti := textinput.New()
 		ti.Placeholder = "type to filter..."
 		ti.Prompt = ""
@@ -394,6 +482,100 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading.progress = progressModel.(progress.Model)
 			return m, progressCmd
 		}
+
+	case debounceCursorMsg:
+		if msg.id == m.cursorDebounceID && msg.cursor == m.table.Cursor() {
+			repos := m.activeRepoList()
+			if msg.cursor >= 0 && msg.cursor < len(repos) {
+				r := repos[msg.cursor]
+				if !r.DetailsLoaded {
+					return m, fetchRepoDetailsCmd(msg.cursor, r)
+				}
+			}
+		}
+		return m, nil
+
+	case repoDetailsLoadedMsg:
+		for i := range m.repoList {
+			if m.repoList[i].Owner == msg.owner && m.repoList[i].Name == msg.name {
+				m.repoList[i] = msg.repo
+				break
+			}
+		}
+		if m.filteredRepos != nil {
+			for i := range m.filteredRepos {
+				if m.filteredRepos[i].Owner == msg.owner && m.filteredRepos[i].Name == msg.name {
+					m.filteredRepos[i] = msg.repo
+					break
+				}
+			}
+		}
+		cursorRepo := m.getCursorRepo()
+		if cursorRepo.Owner == msg.owner && cursorRepo.Name == msg.name {
+			m.setFileList()
+			m.updateReadmeContent()
+			if msg.err != nil {
+				m.toastID++
+				id := m.toastID
+				m.toastMessage = "⚠ Failed to load details (press 'r' to retry)"
+				return m, clearToastCmd(id, 3*time.Second)
+			}
+		}
+		return m, nil
+
+	case nextPageLoadedMsg:
+		m.loadingNextPage = false
+		if msg.err == nil && len(msg.repos) > 0 {
+			m.currentPage = msg.page
+			m.hasMorePages = msg.hasMore
+
+			seen := make(map[string]bool, len(m.repoList))
+			for _, r := range m.repoList {
+				seen[strings.ToLower(r.Owner+"/"+r.Name)] = true
+			}
+
+			baseIdx := len(m.repoList)
+			for _, r := range msg.repos {
+				key := strings.ToLower(r.Owner + "/" + r.Name)
+				if !seen[key] {
+					seen[key] = true
+					r.Index = baseIdx
+					baseIdx++
+					m.repoList = append(m.repoList, r)
+				}
+			}
+
+			if m.cfg != nil && m.cfg.Limit > 0 && len(m.repoList) >= m.cfg.Limit {
+				m.hasMorePages = false
+			}
+
+			query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+			if query == "" {
+				m.filteredRepos = m.repoList
+			} else {
+				var matched []Repo
+				for _, r := range m.repoList {
+					nameMatch := strings.Contains(strings.ToLower(r.Name), query)
+					ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
+					langMatch := strings.Contains(strings.ToLower(r.Language), query)
+					descMatch := strings.Contains(strings.ToLower(r.Description), query)
+					if nameMatch || ownerMatch || langMatch || descMatch {
+						matched = append(matched, r)
+					}
+				}
+				m.filteredRepos = matched
+			}
+
+			limit := len(m.filteredRepos)
+			if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
+				limit = m.cfg.Limit
+			}
+			rows := BuildTableRows(m.filteredRepos, limit, m.userProfile != nil)
+			m.table.SetRows(rows)
+		} else {
+			m.hasMorePages = false
+		}
+		return m, nil
 	}
 
 	if m.state != stateDashboard {
@@ -432,12 +614,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
 
-	if m.table.Cursor() != prevCursor {
-		m.setFileList()
-		m.updateReadmeContent()
+	if cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
-	return m, cmd
+	newCursor := m.table.Cursor()
+	if newCursor != prevCursor {
+		repos := m.activeRepoList()
+		if newCursor >= 0 && newCursor < len(repos) {
+			currRepo := repos[newCursor]
+			m.setFileList()
+			m.updateReadmeContent()
+
+			if !currRepo.DetailsLoaded {
+				m.cursorDebounceID++
+				dID := m.cursorDebounceID
+				cmds = append(cmds, debounceCursorCmd(dID, newCursor, 180*time.Millisecond))
+			}
+
+			if m.userProfile != nil && m.hasMorePages && !m.loadingNextPage && m.cfg != nil && m.cfg.User != "" {
+				if newCursor >= len(repos)-4 {
+					m.loadingNextPage = true
+					cmds = append(cmds, fetchNextPageCmd(m.cfg.User, m.cfg.Language, m.currentPage+1))
+				}
+			}
+		}
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) recalculateLayout(width, height int) {
@@ -470,7 +674,7 @@ func (m *Model) recalculateLayout(width, height int) {
 			m.list.SetHeight(max(1, lowerHeight-2))
 
 			m.viewport.Width = max(20, leftWidth-4)
-			m.viewport.Height = max(1, readmeH-4)
+			m.viewport.Height = max(1, readmeH-2)
 		} else {
 			tableHeight := max(6, min(12, availH*38/100))
 			lowerHeight := availH - tableHeight
@@ -482,7 +686,7 @@ func (m *Model) recalculateLayout(width, height int) {
 			m.list.SetHeight(max(1, lowerHeight-2))
 
 			m.viewport.Width = max(20, rightWidth-4)
-			m.viewport.Height = max(1, availH-4)
+			m.viewport.Height = max(1, availH-2)
 		}
 	} else {
 		contentWidth := width
@@ -496,7 +700,7 @@ func (m *Model) recalculateLayout(width, height int) {
 		m.list.SetHeight(max(1, lowerHeight-2))
 
 		m.viewport.Width = max(20, contentWidth-4)
-		m.viewport.Height = max(1, availH-4)
+		m.viewport.Height = max(1, availH-2)
 	}
 
 	m.setFileList()
@@ -522,7 +726,11 @@ func (m *Model) updateReadmeContent() {
 
 	rawMD := repos[cursor].ReadMe
 	if strings.TrimSpace(rawMD) == "" {
-		rawMD = "_No README found for this repository._"
+		if !repos[cursor].DetailsLoaded {
+			rawMD = fmt.Sprintf("# %s\n\n_Loading repository details..._\n\n%s", repos[cursor].Name, repos[cursor].Description)
+		} else {
+			rawMD = "_No README found for this repository._"
+		}
 	} else {
 		rawMD = utils.CleanMarkdown(rawMD)
 	}
@@ -666,21 +874,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			profileH, readmeH := userProfileLayoutHeights(availH)
 
 			profileCard := m.renderUserProfileCard(leftWidth, profileH, m.theme)
-
-			readmeBorder := lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.Border).
-				Width(leftWidth - 2).
-				Height(readmeH - 2).
-				MaxHeight(readmeH)
-
-			if m.active == readmeActive {
-				readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
-			}
-			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
-			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			readmeRendered := readmeBorder.Render(readmeContent)
-
+			readmeRendered := WrapInTitledBorder(m.viewport.View(), leftWidth, readmeH, "Readme Preview", m.active == readmeActive, m.theme)
 			left := lipgloss.JoinVertical(lipgloss.Left, profileCard, readmeRendered)
 
 			tableHeight := max(6, min(12, availH*38/100))
@@ -711,19 +905,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 
-			readmeBorder := lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.Border).
-				Width(rightWidth - 2).
-				Height(availH - 2).
-				MaxHeight(availH)
-
-			if m.active == readmeActive {
-				readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
-			}
-			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
-			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			right := readmeBorder.Render(readmeContent)
+			right := WrapInTitledBorder(m.viewport.View(), rightWidth, availH, "Readme Preview", m.active == readmeActive, m.theme)
 
 			mainView = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 		}
@@ -734,15 +916,7 @@ func (m Model) renderDashboardView(width, height int) string {
 		lowerHeight := availH - tableHeight
 
 		if m.active == readmeActive {
-			readmeBorder := lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.FocusBorder).
-				Width(contentWidth - 2).
-				Height(availH - 2).
-				MaxHeight(availH)
-			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview (Full Screen):")
-			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			mainView = readmeBorder.Render(readmeContent)
+			mainView = WrapInTitledBorder(m.viewport.View(), contentWidth, availH, "Readme Preview", true, m.theme)
 		} else {
 			fileListWidth := max(22, contentWidth*42/100)
 			metricsWidth := contentWidth - fileListWidth
@@ -844,10 +1018,47 @@ func (m Model) renderStatusBar(width int) string {
 			Render(m.toastMessage)
 	}
 
-	// Build full status item list in priority order: Tabs > Toast > Frequency > User > Theme
+	var loadingPill string
+	if m.loadingNextPage {
+		loadingPill = lipgloss.NewStyle().
+			Foreground(m.theme.Primary).
+			Background(m.theme.Surface).
+			Bold(true).
+			Padding(0, 1).
+			Render("⏳ Loading more...")
+	}
+
+	var rateLimitPill string
+	rlInfo := ghclient.GetRateLimitInfo()
+	if text, isWarn, isCrit := rlInfo.FormatRateLimitIndicator(); text != "" {
+		rlStyle := lipgloss.NewStyle().
+			Foreground(m.theme.Muted).
+			Background(m.theme.Surface).
+			Padding(0, 1)
+
+		if isCrit {
+			rlStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#1a1b26")).
+				Background(lipgloss.Color("#f7768e")).
+				Bold(true).
+				Padding(0, 1)
+		} else if isWarn {
+			rlStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#1a1b26")).
+				Background(lipgloss.Color("#e0af68")).
+				Bold(true).
+				Padding(0, 1)
+		}
+		rateLimitPill = rlStyle.Render(text)
+	}
+
+	// Build full status item list in priority order: Tabs > Toast > Loading > Frequency > User > Theme > RateLimit
 	statusItems := []string{tab1, tab2, tab3}
 	if toastPill != "" {
 		statusItems = append(statusItems, " ", toastPill)
+	}
+	if loadingPill != "" {
+		statusItems = append(statusItems, " ", loadingPill)
 	}
 	if freqPill != "" {
 		statusItems = append(statusItems, " ", freqPill)
@@ -856,6 +1067,9 @@ func (m Model) renderStatusBar(width int) string {
 		statusItems = append(statusItems, " ", userPill)
 	}
 	statusItems = append(statusItems, " ", themePill)
+	if rateLimitPill != "" {
+		statusItems = append(statusItems, " ", rateLimitPill)
+	}
 
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 

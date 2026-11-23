@@ -74,17 +74,29 @@ func TestImageToHalfBlock(t *testing.T) {
 		t.Errorf("expected ANSI 24-bit TrueColor in output")
 	}
 
-	// Test dark background clamping
+	// Test transparent background clamping
+	transSrc := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 10; x++ {
+			transSrc.Set(x, y, color.RGBA{R: 0, G: 0, B: 0, A: 0}) // Transparent
+		}
+	}
+	transOut := ImageToHalfBlock(transSrc, 10, 5)
+	// Transparent pixels should clamp to empty space ' ' without ANSI color codes
+	if strings.Contains(transOut, "\x1b[38;2;") {
+		t.Errorf("transparent pixels should clamp to empty spaces, got: %q", transOut)
+	}
+
+	// Test dark opaque pixels (hair, shadows): should preserve full detail and ANSI colors without stripes
 	darkSrc := image.NewRGBA(image.Rect(0, 0, 10, 10))
 	for y := 0; y < 10; y++ {
 		for x := 0; x < 10; x++ {
-			darkSrc.Set(x, y, color.RGBA{R: 5, G: 5, B: 5, A: 255}) // Below threshold 18
+			darkSrc.Set(x, y, color.RGBA{R: 5, G: 5, B: 5, A: 255})
 		}
 	}
 	darkOut := ImageToHalfBlock(darkSrc, 10, 5)
-	// Dark pixels should clamp to empty space ' ' without ANSI color codes
-	if strings.Contains(darkOut, "\x1b[38;2;") {
-		t.Errorf("dark background pixels should clamp to empty spaces, got: %q", darkOut)
+	if !strings.Contains(darkOut, "\x1b[38;2;") {
+		t.Errorf("dark opaque pixels should render smoothly with TrueColor, got: %q", darkOut)
 	}
 
 	// Nil image should produce fallback silhouette
@@ -131,5 +143,36 @@ func TestAvatarToHalfBlock_WithMockServer(t *testing.T) {
 	emptyOut := AvatarToHalfBlock("", 28, 14)
 	if len(strings.Split(emptyOut, "\n")) != 14 {
 		t.Errorf("empty URL should return fallback of requested height")
+	}
+}
+
+func TestSharpenImage_NonZeroBoundsAndAlphaClamping(t *testing.T) {
+	// Image with non-zero origin bounds
+	src := image.NewRGBA(image.Rect(10, 10, 15, 15))
+	for y := 10; y < 15; y++ {
+		for x := 10; x < 15; x++ {
+			src.Set(x, y, color.RGBA{R: 64, G: 64, B: 64, A: 64})
+		}
+	}
+
+	sharpened := SharpenImage(src)
+	if sharpened == nil {
+		t.Fatalf("expected sharpened image, got nil")
+	}
+
+	// Output must have zero-origin bounds
+	bounds := sharpened.Bounds()
+	if bounds.Min.X != 0 || bounds.Min.Y != 0 {
+		t.Errorf("expected zero-origin bounds, got %v", bounds.Min)
+	}
+
+	// Verify channel clamp: RGB must never exceed A (premultiplied color contract)
+	for y := 0; y < bounds.Dy(); y++ {
+		for x := 0; x < bounds.Dx(); x++ {
+			c := sharpened.RGBAAt(x, y)
+			if c.R > c.A || c.G > c.A || c.B > c.A {
+				t.Errorf("pixel at (%d,%d) violates color.RGBA contract: R:%d, G:%d, B:%d > A:%d", x, y, c.R, c.G, c.B, c.A)
+			}
+		}
 	}
 }

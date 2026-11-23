@@ -33,6 +33,7 @@ func Fetch(url string) ([]byte, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
+	UpdateRateLimitFromHeaders(res.Header)
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("HTTP request failed with status code %d", res.StatusCode)

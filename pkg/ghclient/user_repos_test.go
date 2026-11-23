@@ -141,3 +141,30 @@ func TestGetUserRepositories_NoReposFound(t *testing.T) {
 		t.Errorf("expected error when no repos found, got nil")
 	}
 }
+
+func TestFetchUserRepositoriesPage_EmptyUser(t *testing.T) {
+	_, _, err := FetchUserRepositoriesPage("", "All", 1)
+	if err == nil {
+		t.Errorf("expected error for empty user, got nil")
+	}
+}
+
+func TestFetchUserRepositoriesPage_Success(t *testing.T) {
+	oldHook := fetchUserReposHook
+	defer func() { fetchUserReposHook = oldHook }()
+
+	fetchUserReposHook = func(url string) ([]byte, error) {
+		return []byte(sampleUserReposHTML), nil
+	}
+
+	repos, hasMore, err := FetchUserRepositoriesPage("octocat", "Go", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Errorf("expected 2 repos, got %d", len(repos))
+	}
+	if hasMore {
+		t.Errorf("expected hasMore=false for 2 repos, got true")
+	}
+}
