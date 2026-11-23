@@ -172,6 +172,7 @@ func fetchContributionsFragment(username string, profile *UserProfile) {
 		return
 	}
 	defer resp.Body.Close()
+	UpdateRateLimitFromHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		return
@@ -230,6 +231,7 @@ func fetchUserProfileFromAPI(username string, profile *UserProfile) error {
 		return err
 	}
 	defer resp.Body.Close()
+	UpdateRateLimitFromHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))

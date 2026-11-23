@@ -810,7 +810,31 @@ func (m Model) renderStatusBar(width int) string {
 			Render(m.toastMessage)
 	}
 
-	// Build full status item list in priority order: Tabs > Toast > Frequency > User > Theme
+	var rateLimitPill string
+	rlInfo := ghclient.GetRateLimitInfo()
+	if text, isWarn, isCrit := rlInfo.FormatRateLimitIndicator(); text != "" {
+		rlStyle := lipgloss.NewStyle().
+			Foreground(m.theme.Muted).
+			Background(m.theme.Surface).
+			Padding(0, 1)
+
+		if isCrit {
+			rlStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#1a1b26")).
+				Background(lipgloss.Color("#f7768e")).
+				Bold(true).
+				Padding(0, 1)
+		} else if isWarn {
+			rlStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#1a1b26")).
+				Background(lipgloss.Color("#e0af68")).
+				Bold(true).
+				Padding(0, 1)
+		}
+		rateLimitPill = rlStyle.Render(text)
+	}
+
+	// Build full status item list in priority order: Tabs > Toast > Frequency > User > Theme > RateLimit
 	statusItems := []string{tab1, tab2, tab3}
 	if toastPill != "" {
 		statusItems = append(statusItems, " ", toastPill)
@@ -822,6 +846,9 @@ func (m Model) renderStatusBar(width int) string {
 		statusItems = append(statusItems, " ", userPill)
 	}
 	statusItems = append(statusItems, " ", themePill)
+	if rateLimitPill != "" {
+		statusItems = append(statusItems, " ", rateLimitPill)
+	}
 
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 

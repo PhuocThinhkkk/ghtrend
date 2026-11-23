@@ -64,6 +64,7 @@ func fetchLanguagesFromAPI(owner, repo string) (map[string]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	UpdateRateLimitFromHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -118,6 +119,7 @@ func fetchCommitsFromAPI(owner, repo string) ([]Commit, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	UpdateRateLimitFromHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
