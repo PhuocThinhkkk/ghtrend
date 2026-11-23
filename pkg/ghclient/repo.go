@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
 )
 
@@ -90,6 +91,72 @@ func fetchLanguagesFromAPI(owner, repo string) (map[string]string, error) {
 	return result, nil
 }
 
+type Commit struct {
+	Hash    string `json:"hash"`
+	Message string `json:"message"`
+	Date    string `json:"date,omitempty"`
+}
+
+func fetchCommitsFromAPI(owner, repo string) ([]Commit, error) {
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("invalid owner or repo")
+	}
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/commits?per_page=6", githubAPIBaseURL, url.PathEscape(owner), url.PathEscape(repo))
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "ghtrend")
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	if token := getGitHubAuthToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := apiHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("github api status %d", resp.StatusCode)
+	}
+
+	var data []struct {
+		Sha    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Date string `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+
+	var commits []Commit
+	for _, item := range data {
+		hash := item.Sha
+		if len(hash) > 7 {
+			hash = hash[:7]
+		}
+		msg := item.Commit.Message
+		if idx := strings.Index(msg, "\n"); idx != -1 {
+			msg = msg[:idx]
+		}
+		commits = append(commits, Commit{
+			Hash:    hash,
+			Message: strings.TrimSpace(msg),
+			Date:    item.Commit.Author.Date,
+		})
+	}
+	return commits, nil
+}
+
 type Repo struct {
 	Index              int               `json:"index"`
 	Name               string            `json:"name"`
@@ -106,6 +173,7 @@ type Repo struct {
 	HtmlPageTerm       string            `json:"html_page_term"`
 	Pinned             bool              `json:"pinned,omitempty"`
 	UserProfile        *UserProfile      `json:"user_profile,omitempty"`
+	RecentCommits      []Commit          `json:"recent_commits,omitempty"`
 }
 
 type ExtraInfor struct {
@@ -124,18 +192,19 @@ type RepoList []Repo
 
 func (repos RepoList) loadDetails() error {
 	var wg sync.WaitGroup
-	errChan := make(chan error, 5*len(repos)+1)
+	errChan := make(chan error, 6*len(repos)+1)
 
 	for i := range repos {
 		signal := make(chan struct{})
 		repo := &repos[i]
 
-		wg.Add(5)
+		wg.Add(6)
 		go repo.loadHtmlPageTerm(errChan, &wg, signal)
 		go repo.loadReadMe(errChan, &wg, signal)
 		go repo.loadRootInfo(errChan, &wg, signal)
 		go repo.loadExtraInfo(errChan, &wg, signal)
 		go repo.loadLanguageBreakdown(errChan, &wg, signal)
+		go repo.loadCommits(errChan, &wg, signal)
 	}
 	wg.Wait()
 
@@ -254,6 +323,55 @@ func (r *Repo) loadReadMe(errChan chan<- error, wg *sync.WaitGroup, signal <-cha
 	}
 	readme = utils.CleanMarkdown(readme)
 	r.ReadMe = readme
+}
+
+func (r *Repo) loadCommits(errChan chan<- error, wg *sync.WaitGroup, signal <-chan struct{}) {
+	defer wg.Done()
+	<-signal
+
+	if r.Owner != "" && r.Name != "" {
+		commits, err := fetchCommitsFromAPI(r.Owner, r.Name)
+		if err == nil && len(commits) > 0 {
+			r.RecentCommits = commits
+			return
+		}
+	}
+
+	// Fallback from HTML or default
+	if r.HtmlPageTerm != "" {
+		doc, err := goquery.NewDocumentFromReader(strings.NewReader(r.HtmlPageTerm))
+		if err == nil {
+			var parsed []Commit
+			doc.Find("a[href*='/commit/']").Each(func(i int, s *goquery.Selection) {
+				if len(parsed) >= 6 {
+					return
+				}
+				href, _ := s.Attr("href")
+				parts := strings.Split(href, "/commit/")
+				if len(parts) == 2 {
+					hash := parts[1]
+					if len(hash) > 7 {
+						hash = hash[:7]
+					}
+					txt := strings.TrimSpace(s.Text())
+					if txt != "" && len(txt) > 3 && !strings.Contains(txt, "/") {
+						parsed = append(parsed, Commit{
+							Hash:    hash,
+							Message: txt,
+						})
+					}
+				}
+			})
+			if len(parsed) > 0 {
+				r.RecentCommits = parsed
+				return
+			}
+		}
+	}
+
+	r.RecentCommits = []Commit{
+		{Hash: "main", Message: "Initial commit & release setup"},
+	}
 }
 
 func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup, signal chan<- struct{}) {

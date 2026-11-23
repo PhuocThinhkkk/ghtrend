@@ -15,17 +15,21 @@ import (
 )
 
 type UserProfile struct {
-	Username    string   `json:"username"`
-	Name        string   `json:"name"`
-	Bio         string   `json:"bio"`
-	AvatarURL   string   `json:"avatar_url"`
-	AvatarASCII string   `json:"avatar_ascii"`
-	Company     string   `json:"company"`
-	Location    string   `json:"location"`
-	Followers   string   `json:"followers"`
-	Following   string   `json:"following"`
-	PublicRepos int      `json:"public_repos"`
-	PinnedRepos []string `json:"pinned_repos"`
+	Username           string   `json:"username"`
+	Name               string   `json:"name"`
+	Bio                string   `json:"bio"`
+	AvatarURL          string   `json:"avatar_url"`
+	AvatarASCII        string   `json:"avatar_ascii"`
+	AvatarHalfBlock    string   `json:"avatar_half_block,omitempty"`
+	Company            string   `json:"company"`
+	Location           string   `json:"location"`
+	Followers          string   `json:"followers"`
+	Following          string   `json:"following"`
+	PublicRepos        int      `json:"public_repos"`
+	PinnedRepos        []string `json:"pinned_repos"`
+	TotalContributions string   `json:"total_contributions,omitempty"`
+	ContributionDays   []int    `json:"contribution_days,omitempty"`
+	Blog               string   `json:"blog,omitempty"`
 }
 
 var (
@@ -53,11 +57,13 @@ func GetUserProfile(username string) (*UserProfile, error) {
 		_ = fetchUserProfileFromAPI(username, profile)
 	}
 
-	// 3. Render avatar to ASCII art (cached on disk)
+	// 3. Render avatar to ASCII and High-Resolution Half-Block art (cached on disk)
 	if profile.AvatarURL != "" {
 		profile.AvatarASCII = ascii.AvatarToASCII(profile.AvatarURL, 22, 9)
+		profile.AvatarHalfBlock = ascii.AvatarToHalfBlock(profile.AvatarURL, 28, 14)
 	} else {
 		profile.AvatarASCII = ascii.FallbackSilhouetteASCII(22, 9)
+		profile.AvatarHalfBlock = ascii.FallbackSilhouetteHalfBlock(28, 14)
 	}
 
 	return profile, nil
@@ -126,6 +132,33 @@ func scrapeUserProfile(username string, profile *UserProfile) error {
 		profile.Location = location
 	}
 
+	blog := strings.TrimSpace(doc.Find("li[itemprop='url'] a").First().Text())
+	if blog != "" {
+		profile.Blog = blog
+	}
+
+	// Extract total contributions in the last year
+	doc.Find("h2.f4.text-normal").Each(func(i int, s *goquery.Selection) {
+		t := strings.TrimSpace(s.Text())
+		if strings.Contains(strings.ToLower(t), "contributions in the last year") {
+			parts := strings.Fields(t)
+			if len(parts) > 0 {
+				profile.TotalContributions = parts[0]
+			}
+		}
+	})
+
+	// Extract contribution calendar days (levels 0-4)
+	doc.Find("td.ContributionCalendar-day, rect.ContributionCalendar-day").Each(func(i int, s *goquery.Selection) {
+		levelStr, exists := s.Attr("data-level")
+		if exists && levelStr != "" {
+			var lvl int
+			if _, err := fmt.Sscanf(levelStr, "%d", &lvl); err == nil {
+				profile.ContributionDays = append(profile.ContributionDays, lvl)
+			}
+		}
+	})
+
 	// Extract pinned repositories (in order)
 	pinnedSet := make(map[string]bool)
 	doc.Find("ol.d-flex li.pinned-item-list-item").Each(func(i int, s *goquery.Selection) {
@@ -175,6 +208,7 @@ func fetchUserProfileFromAPI(username string, profile *UserProfile) error {
 		Followers   int    `json:"followers"`
 		Following   int    `json:"following"`
 		PublicRepos int    `json:"public_repos"`
+		Blog        string `json:"blog"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
@@ -195,6 +229,9 @@ func fetchUserProfileFromAPI(username string, profile *UserProfile) error {
 	}
 	if profile.Location == "" && data.Location != "" {
 		profile.Location = data.Location
+	}
+	if profile.Blog == "" && data.Blog != "" {
+		profile.Blog = data.Blog
 	}
 	if profile.Followers == "" {
 		profile.Followers = fmt.Sprintf("%d", data.Followers)
