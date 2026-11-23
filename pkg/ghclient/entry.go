@@ -61,6 +61,7 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 	}
 
 	var allRepos RepoList
+	seenRepos := make(map[string]bool)
 	page := 1
 	maxPages := 5
 
@@ -90,7 +91,14 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 			break
 		}
 
-		allRepos = append(allRepos, pageRepos...)
+		for _, pageRepo := range pageRepos {
+			key := strings.ToLower(pageRepo.Owner + "/" + pageRepo.Name)
+			if !seenRepos[key] {
+				seenRepos[key] = true
+				allRepos = append(allRepos, pageRepo)
+			}
+		}
+
 		if len(pageRepos) < 30 {
 			break
 		}
@@ -101,12 +109,45 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 		return nil, fmt.Errorf("no repositories found for user '%s'", username)
 	}
 
+	profile, _ := GetUserProfile(username)
+
+	if profile != nil && len(profile.PinnedRepos) > 0 {
+		pinnedMap := make(map[string]bool)
+		for _, name := range profile.PinnedRepos {
+			pinnedMap[strings.ToLower(name)] = true
+		}
+
+		repoMap := make(map[string]Repo)
+		for _, r := range allRepos {
+			repoMap[strings.ToLower(r.Name)] = r
+		}
+
+		var pinnedList RepoList
+		var regularList RepoList
+
+		for _, name := range profile.PinnedRepos {
+			if r, ok := repoMap[strings.ToLower(name)]; ok {
+				r.Pinned = true
+				pinnedList = append(pinnedList, r)
+			}
+		}
+		for _, r := range allRepos {
+			if !pinnedMap[strings.ToLower(r.Name)] {
+				regularList = append(regularList, r)
+			}
+		}
+		allRepos = append(pinnedList, regularList...)
+	}
+
 	if len(allRepos) > limit {
 		allRepos = allRepos[:limit]
 	}
 
 	for i := range allRepos {
 		allRepos[i].Index = i
+	}
+	if len(allRepos) > 0 {
+		allRepos[0].UserProfile = profile
 	}
 
 	err := allRepos.loadDetails()
