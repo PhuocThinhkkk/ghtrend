@@ -146,6 +146,9 @@ func AvatarToASCII(avatarURL string, width, height int) string {
 func getCacheFilePath(avatarURL string) string {
 	hash := sha256.Sum256([]byte(avatarURL))
 	filename := hex.EncodeToString(hash[:16]) + ".img"
+	if customDir := os.Getenv("GHTREND_CACHE_DIR"); customDir != "" {
+		return filepath.Join(customDir, "avatars", filename)
+	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		cacheDir = "."

@@ -7,35 +7,49 @@ import (
 )
 
 func RenderTable(t table.Model, state activeComponent, width, height int, th theme.Theme) string {
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(th.Border)
-	if width > 0 {
-		style = style.Width(max(10, width-2)).MaxWidth(width)
+	if width <= 0 {
+		width = 40
 	}
-	if height > 0 {
-		style = style.Height(max(1, height-2)).MaxHeight(height)
-	}
-	if state == tableActive {
-		style = style.BorderForeground(th.FocusBorder)
-	}
-	return style.Render(t.View())
+	return WrapInTitledBorder(t.View(), width, height, "Repositories", state == tableActive, th)
 }
 
 func CalculateTableColumns(width int) []table.Column {
-	// RoundedBorder takes 2 chars; 5 columns with 2 padding each = 10 chars. Total overhead = 12.
+	return CalculateTableColumnsForMode(width, false)
+}
+
+func CalculateTableColumnsForMode(width int, isUser bool) []table.Column {
+	// Account for 2 border characters + 2 padding cells per column (5 columns * 2 = 10 cells)
 	usable := width - 12
-	if usable < 30 {
-		usable = 30
+	if usable < 22 {
+		usable = 22
 	}
 
-	ownerW := max(8, usable*20/100)
-	repoW := max(12, usable*36/100)
-	starsW := max(5, usable*12/100)
-	forksW := max(5, usable*12/100)
-	langW := usable - (ownerW + repoW + starsW + forksW)
-	if langW < 6 {
-		langW = 6
+	starsW := max(3, usable*8/100)
+	forksW := max(3, usable*8/100)
+	langW := max(5, usable*14/100)
+	rem := usable - (starsW + forksW + langW)
+
+	if isUser {
+		repoW := max(8, rem*45/100)
+		descW := rem - repoW
+		if descW < 8 {
+			descW = 8
+			repoW = rem - descW
+		}
+		return []table.Column{
+			{Title: "Repo name", Width: repoW},
+			{Title: "Description", Width: descW},
+			{Title: "Stars", Width: starsW},
+			{Title: "Forks", Width: forksW},
+			{Title: "Language", Width: langW},
+		}
+	}
+
+	ownerW := max(7, rem*35/100)
+	repoW := rem - ownerW
+	if repoW < 8 {
+		repoW = 8
+		ownerW = rem - repoW
 	}
 
 	return []table.Column{
@@ -47,16 +61,17 @@ func CalculateTableColumns(width int) []table.Column {
 	}
 }
 
-func UpdateTableDimensions(t *table.Model, width, height int) {
+func UpdateTableDimensions(t *table.Model, width, height int, isUser ...bool) {
+	userMode := false
+	if len(isUser) > 0 {
+		userMode = isUser[0]
+	}
 	if width > 0 {
-		cols := CalculateTableColumns(width)
+		cols := CalculateTableColumnsForMode(width, userMode)
 		t.SetColumns(cols)
 		t.SetWidth(max(10, width-2))
 	}
 	if height > 0 {
-		// Bubbles table.SetHeight(h) sets viewport.Height = h - lipgloss.Height(headersView).
-		// Box border takes 2 lines, so the table view inside gets (height - 2) lines.
-		// Passing max(3, height-2) leaves at least 1 line for the viewport rows.
 		t.SetHeight(max(3, height-2))
 	}
 }
@@ -66,8 +81,8 @@ func ApplyThemeToTable(t *table.Model, th theme.Theme) {
 	s.Header = s.Header.
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(th.Border).
-		Foreground(th.Text).
-		Background(th.Surface).
+		Foreground(th.Muted).
+		Background(th.Background).
 		BorderBottom(true).
 		Bold(true)
 
@@ -80,7 +95,12 @@ func ApplyThemeToTable(t *table.Model, th theme.Theme) {
 }
 
 func InitialTable(repos []Repo, limit int, th theme.Theme) table.Model {
-	columns := CalculateTableColumns(80)
+	isUser := len(repos) > 0 && repos[0].UserProfile != nil
+	return InitialTableWithMode(repos, limit, th, isUser)
+}
+
+func InitialTableWithMode(repos []Repo, limit int, th theme.Theme, isUser bool) table.Model {
+	columns := CalculateTableColumnsForMode(80, isUser)
 	var rows []table.Row
 
 	for _, repo := range repos {
@@ -91,13 +111,37 @@ func InitialTable(repos []Repo, limit int, th theme.Theme) table.Model {
 		if repo.Pinned {
 			displayName = "📌 " + repo.Name
 		}
-		rows = append(rows, table.Row{
-			repo.Owner,
-			displayName,
-			repo.Stars,
-			repo.Forks,
-			repo.Language,
-		})
+
+		stars := repo.Stars
+		if stars == "" || stars == "0" {
+			stars = "·"
+		}
+		forks := repo.Forks
+		if forks == "" || forks == "0" {
+			forks = "·"
+		}
+
+		if isUser {
+			desc := repo.Description
+			if desc == "" {
+				desc = "·"
+			}
+			rows = append(rows, table.Row{
+				displayName,
+				desc,
+				stars,
+				forks,
+				repo.Language,
+			})
+		} else {
+			rows = append(rows, table.Row{
+				repo.Owner,
+				displayName,
+				stars,
+				forks,
+				repo.Language,
+			})
+		}
 		limit--
 	}
 

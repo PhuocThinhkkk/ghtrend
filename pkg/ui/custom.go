@@ -16,6 +16,17 @@ func renderEachField(lineWidth int, label string, value string) string {
 	return label + strings.Repeat(" ", spaceCount) + value + "\n"
 }
 
+func renderEachFieldWithTheme(lineWidth int, label string, value string, th theme.Theme) string {
+	styledLabel := lipgloss.NewStyle().Foreground(th.Muted).Render(label)
+	styledVal := lipgloss.NewStyle().Foreground(th.Text).Bold(true).Render(value)
+	spaceCount := lineWidth - lipgloss.Width(label) - lipgloss.Width(value)
+	if spaceCount < 1 {
+		spaceCount = 1
+	}
+
+	return styledLabel + strings.Repeat(" ", spaceCount) + styledVal + "\n"
+}
+
 func renderHeader(lineWidth int, header string, th theme.Theme) string {
 	headerBgStyle := lipgloss.NewStyle().
 		Background(th.Primary).

@@ -188,3 +188,55 @@ func TestParseLanguagesBreakDown_GraphsLanguagesSelector(t *testing.T) {
 		t.Errorf("expected 0 languages when percentage is missing, got %v", badLangs)
 	}
 }
+
+func TestFetchCommitsFromAPI_Success(t *testing.T) {
+	mockCommits := []map[string]interface{}{
+		{
+			"sha": "a1b2c3d4e5f67890",
+			"commit": map[string]interface{}{
+				"message": "feat: add pixel-block typography\n\nExtended body details",
+				"author": map[string]interface{}{
+					"date": "2026-11-23T10:00:00Z",
+				},
+			},
+		},
+		{
+			"sha": "f9e8d7c6b5a43210",
+			"commit": map[string]interface{}{
+				"message": "fix: correct layout bounds",
+				"author": map[string]interface{}{
+					"date": "2026-11-23T09:00:00Z",
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/owner/repo/commits" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(mockCommits)
+	}))
+	defer server.Close()
+
+	origURL := githubAPIBaseURL
+	githubAPIBaseURL = server.URL
+	defer func() { githubAPIBaseURL = origURL }()
+
+	commits, err := fetchCommitsFromAPI("owner", "repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("expected 2 commits, got %d", len(commits))
+	}
+	if commits[0].Hash != "a1b2c3d" {
+		t.Errorf("expected short hash 'a1b2c3d', got %s", commits[0].Hash)
+	}
+	if commits[0].Message != "feat: add pixel-block typography" {
+		t.Errorf("expected single-line message, got %q", commits[0].Message)
+	}
+}
+
