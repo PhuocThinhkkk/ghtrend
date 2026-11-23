@@ -49,6 +49,7 @@ type Model struct {
 	cfg            *flags.CmdConfig
 	theme          theme.Theme
 	showThemeModal bool
+	showHelpModal  bool
 	themeIndex     int
 	table          table.Model
 	list           list.Model
@@ -180,6 +181,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.showHelpModal {
+			switch msg.String() {
+			case "esc", "?", "h", "q", "enter":
+				m.showHelpModal = false
+				return m, nil
+			}
+			return m, nil
+		}
+
 		if m.filtering {
 			switch msg.String() {
 			case "esc":
@@ -257,6 +267,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
+				return m, nil
+			}
+		case "d", "f":
+			if m.state == stateDashboard {
+				if m.cfg != nil && m.cfg.User != "" {
+					m.toastID++
+					id := m.toastID
+					m.toastMessage = "ℹ Frequency applies to trending mode"
+					return m, clearToastCmd(id, 2*time.Second)
+				}
+				if m.cfg != nil {
+					m.cfg.Since = flags.NextFrequency(m.cfg.Since)
+					m.toastID++
+					id := m.toastID
+					m.toastMessage = fmt.Sprintf("📅 %s Trending", m.cfg.Since.DisplayTitle())
+					m.state = stateLoading
+					m.loading = newLoadingModel()
+					return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher), clearToastCmd(id, 2*time.Second))
+				}
+			}
+		case "?", "h":
+			if m.state == stateDashboard {
+				m.showHelpModal = true
 				return m, nil
 			}
 		case "r":
@@ -541,6 +574,10 @@ func (m Model) View() string {
 		return m.renderThemeSelectorModal(width, height)
 	}
 
+	if m.showHelpModal {
+		return m.renderHelpModal(width, height)
+	}
+
 	switch m.state {
 	case stateLoading:
 		return m.renderLoadingView(width, height)
@@ -806,6 +843,16 @@ func (m Model) renderStatusBar(width int) string {
 			Render(fmt.Sprintf("👤 @%s", m.cfg.User))
 	}
 
+	var freqPill string
+	if m.cfg != nil && m.cfg.User == "" {
+		freqPill = lipgloss.NewStyle().
+			Foreground(m.theme.Primary).
+			Background(m.theme.Surface).
+			Bold(true).
+			Padding(0, 1).
+			Render(fmt.Sprintf("📅 %s [d]", m.cfg.Since.DisplayTitle()))
+	}
+
 	var toastPill string
 	if m.toastMessage != "" {
 		toastPill = lipgloss.NewStyle().
@@ -816,10 +863,13 @@ func (m Model) renderStatusBar(width int) string {
 			Render(m.toastMessage)
 	}
 
-	// Build full status item list in priority order: Tabs > Toast > User > Theme
+	// Build full status item list in priority order: Tabs > Toast > Frequency > User > Theme
 	statusItems := []string{tab1, tab2, tab3}
 	if toastPill != "" {
 		statusItems = append(statusItems, " ", toastPill)
+	}
+	if freqPill != "" {
+		statusItems = append(statusItems, " ", freqPill)
 	}
 	if userPill != "" {
 		statusItems = append(statusItems, " ", userPill)
@@ -828,18 +878,21 @@ func (m Model) renderStatusBar(width int) string {
 
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 
-	helpStr := "[/] Filter  [o] Open  [y] Copy  [Tab] Focus  [t] Theme  [q] Quit"
-	if width < 140 {
-		helpStr = "[/] Filter  [o] Open  [y] Copy  [Tab] Focus  [q] Quit"
+	helpStr := "[/] Filter  [d] Freq  [o] Open  [y] Copy  [t] Theme  [?] Help  [q] Quit"
+	if width < 145 {
+		helpStr = "[/] Filter  [d] Freq  [o] Open  [y] Copy  [t] Theme  [?] Help  [q] Quit"
 	}
-	if width < 115 {
-		helpStr = "[/] Filter  [o] Open  [Tab] Focus  [q] Quit"
+	if width < 125 {
+		helpStr = "[/] Filter  [d] Freq  [o] Open  [t] Theme  [?] Help  [q] Quit"
 	}
-	if width < 95 {
-		helpStr = "[Tab] Nav  [q] Quit"
+	if width < 105 {
+		helpStr = "[/] Filter  [d] Freq  [o] Open  [?] Help  [q] Quit"
+	}
+	if width < 85 {
+		helpStr = "[Tab] Nav  [?] Help  [q] Quit"
 	}
 	if width < 70 {
-		helpStr = "[q] Quit"
+		helpStr = "[?] Help  [q] Quit"
 	}
 
 	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
@@ -847,12 +900,25 @@ func (m Model) renderStatusBar(width int) string {
 
 	// Step 1: if too tight, simplify help string first
 	if gap < 1 && width >= 80 {
-		helpStr = "[q] Quit"
+		helpStr = "[?] Help  [q] Quit"
 		helpText = lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
 		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 	}
 
-	// Step 2: if still tight, drop theme and user pills, prioritizing toast
+	// Step 2: if still tight, drop theme and user pills, keeping tabs, toast, and freqPill
+	if gap < 1 {
+		statusItems = []string{tab1, tab2, tab3}
+		if toastPill != "" {
+			statusItems = append(statusItems, " ", toastPill)
+		}
+		if freqPill != "" {
+			statusItems = append(statusItems, " ", freqPill)
+		}
+		tabs = lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
+		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
+	}
+
+	// Step 3: if still tight, drop freqPill too, keeping tabs and toast
 	if gap < 1 {
 		statusItems = []string{tab1, tab2, tab3}
 		if toastPill != "" {
@@ -862,7 +928,7 @@ func (m Model) renderStatusBar(width int) string {
 		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 	}
 
-	// Step 3: if still tight on very narrow terminals (<65), drop toast
+	// Step 4: if still tight on very narrow terminals (<65), drop toast
 	if gap < 1 {
 		statusItems = []string{tab1, tab2, tab3}
 		tabs = lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
@@ -947,6 +1013,85 @@ func (m Model) renderThemeSelectorModal(width, height int) string {
 		)
 	}
 
+	card := modalBorder.Render(content)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m Model) renderHelpModal(width, height int) string {
+	padV := 1
+	if height < 22 {
+		padV = 0
+	}
+	modalBorder := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Primary).
+		Padding(padV, 2).
+		Width(min(64, width-2)).
+		MaxWidth(width).
+		MaxHeight(height)
+
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Primary).
+		Render("📖 KEYBOARD SHORTCUTS")
+
+	sectionStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Secondary)
+
+	keyStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Accent)
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(m.theme.Text)
+
+	formatRow := func(key, desc string) string {
+		return fmt.Sprintf("  %-18s %s", keyStyle.Render(key), descStyle.Render(desc))
+	}
+
+	var sections []string
+	sections = append(sections, title)
+
+	if height >= 24 {
+		sections = append(sections,
+			"",
+			sectionStyle.Render("NAVIGATION"),
+			formatRow("Tab / Shift+Tab", "Cycle focus between panes"),
+			formatRow("1, 2, 3", "Jump to Table, Files, Readme"),
+			formatRow("↑/↓, k/j", "Navigate rows or scroll"),
+			"",
+			sectionStyle.Render("TRENDING & ACTIONS"),
+			formatRow("/", "Interactive in-place filter"),
+			formatRow("d / f", "Cycle Daily ⇄ Weekly ⇄ Monthly"),
+			formatRow("o", "Open repository in browser"),
+			formatRow("y", "Copy repository URL"),
+			"",
+			sectionStyle.Render("SETTINGS & SYSTEM"),
+			formatRow("t", "Color theme palette selector"),
+			formatRow("? / h", "Toggle this help shortcut dialog"),
+			formatRow("Esc", "Reset search / close modals"),
+			formatRow("q / Ctrl+C", "Quit application"),
+		)
+	} else {
+		sections = append(sections,
+			formatRow("Tab / 1-3", "Cycle or jump panes"),
+			formatRow("↑/↓ / k/j", "Navigate items"),
+			formatRow("/", "Fuzzy search filter"),
+			formatRow("d / f", "Cycle Daily/Weekly/Monthly"),
+			formatRow("o / y", "Open browser / Copy URL"),
+			formatRow("t", "Theme selector"),
+			formatRow("? / Esc", "Close help / Clear filter"),
+			formatRow("q", "Quit"),
+		)
+	}
+
+	closeHint := lipgloss.NewStyle().
+		Foreground(m.theme.Muted).
+		Render("[Esc] [?] [q] Close")
+
+	sections = append(sections, "", closeHint)
+	content := lipgloss.JoinVertical(lipgloss.Center, sections...)
 	card := modalBorder.Render(content)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
 }

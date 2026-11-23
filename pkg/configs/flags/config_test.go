@@ -60,3 +60,33 @@ func TestIsValidFrequency(t *testing.T) {
 		}
 	}
 }
+
+func TestNextFrequency(t *testing.T) {
+	if NextFrequency(Daily) != Weekly {
+		t.Errorf("expected NextFrequency(Daily) to be Weekly")
+	}
+	if NextFrequency(Weekly) != Monthly {
+		t.Errorf("expected NextFrequency(Weekly) to be Monthly")
+	}
+	if NextFrequency(Monthly) != Daily {
+		t.Errorf("expected NextFrequency(Monthly) to be Daily")
+	}
+	if NextFrequency(Frequency("unknown")) != Daily {
+		t.Errorf("expected NextFrequency(unknown) to fallback to Daily")
+	}
+}
+
+func TestFrequency_DisplayTitle(t *testing.T) {
+	if Daily.DisplayTitle() != "Daily" {
+		t.Errorf("expected Daily.DisplayTitle() to be 'Daily', got %q", Daily.DisplayTitle())
+	}
+	if Weekly.DisplayTitle() != "Weekly" {
+		t.Errorf("expected Weekly.DisplayTitle() to be 'Weekly', got %q", Weekly.DisplayTitle())
+	}
+	if Monthly.DisplayTitle() != "Monthly" {
+		t.Errorf("expected Monthly.DisplayTitle() to be 'Monthly', got %q", Monthly.DisplayTitle())
+	}
+	if Frequency("unknown").DisplayTitle() != "Daily" {
+		t.Errorf("expected fallback to 'Daily', got %q", Frequency("unknown").DisplayTitle())
+	}
+}
