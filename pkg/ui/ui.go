@@ -63,8 +63,64 @@ type Model struct {
 	userProfile    *ghclient.UserProfile
 	filtering      bool
 	filterInput    textinput.Model
-	toastMessage   string
-	toastID        int
+	toastMessage     string
+	toastID          int
+	currentPage      int
+	hasMorePages     bool
+	loadingNextPage  bool
+	cursorDebounceID int
+}
+
+type debounceCursorMsg struct {
+	id     int
+	cursor int
+}
+
+type repoDetailsLoadedMsg struct {
+	cursor int
+	owner  string
+	name   string
+	repo   Repo
+	err    error
+}
+
+type nextPageLoadedMsg struct {
+	page    int
+	repos   []Repo
+	hasMore bool
+	err     error
+}
+
+func debounceCursorCmd(id, cursor int, d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return debounceCursorMsg{id: id, cursor: cursor}
+	})
+}
+
+func fetchRepoDetailsCmd(cursor int, r Repo) tea.Cmd {
+	return func() tea.Msg {
+		repoCopy := r
+		err := repoCopy.LoadDetails()
+		return repoDetailsLoadedMsg{
+			cursor: cursor,
+			owner:  repoCopy.Owner,
+			name:   repoCopy.Name,
+			repo:   repoCopy,
+			err:    err,
+		}
+	}
+}
+
+func fetchNextPageCmd(username, language string, nextPage int) tea.Cmd {
+	return func() tea.Msg {
+		repos, hasMore, err := ghclient.FetchUserRepositoriesPage(username, language, nextPage)
+		return nextPageLoadedMsg{
+			page:    nextPage,
+			repos:   repos,
+			hasMore: hasMore,
+			err:     err,
+		}
+	}
 }
 
 func (m *Model) activeRepoList() []Repo {
@@ -365,6 +421,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.userProfile = msg.repos[0].UserProfile
 		}
 
+		m.currentPage = 1
+		if m.userProfile != nil && m.cfg != nil && m.cfg.User != "" {
+			maxLimit := 2202
+			if m.cfg.Limit > 0 {
+				maxLimit = m.cfg.Limit
+			}
+			m.hasMorePages = len(msg.repos) >= 15 && len(msg.repos) < maxLimit
+		} else {
+			m.hasMorePages = false
+		}
+		m.loadingNextPage = false
+
 		ti := textinput.New()
 		ti.Placeholder = "type to filter..."
 		ti.Prompt = ""
@@ -394,6 +462,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading.progress = progressModel.(progress.Model)
 			return m, progressCmd
 		}
+
+	case debounceCursorMsg:
+		if msg.id == m.cursorDebounceID && msg.cursor == m.table.Cursor() {
+			repos := m.activeRepoList()
+			if msg.cursor >= 0 && msg.cursor < len(repos) {
+				r := repos[msg.cursor]
+				if !r.DetailsLoaded {
+					return m, fetchRepoDetailsCmd(msg.cursor, r)
+				}
+			}
+		}
+		return m, nil
+
+	case repoDetailsLoadedMsg:
+		if msg.err == nil {
+			for i := range m.repoList {
+				if m.repoList[i].Owner == msg.owner && m.repoList[i].Name == msg.name {
+					m.repoList[i] = msg.repo
+					break
+				}
+			}
+			if m.filteredRepos != nil {
+				for i := range m.filteredRepos {
+					if m.filteredRepos[i].Owner == msg.owner && m.filteredRepos[i].Name == msg.name {
+						m.filteredRepos[i] = msg.repo
+						break
+					}
+				}
+			}
+			if m.table.Cursor() == msg.cursor {
+				m.setFileList()
+				m.updateReadmeContent()
+			}
+		}
+		return m, nil
+
+	case nextPageLoadedMsg:
+		m.loadingNextPage = false
+		if msg.err == nil && len(msg.repos) > 0 {
+			m.currentPage = msg.page
+			m.hasMorePages = msg.hasMore
+			if m.cfg != nil && m.cfg.Limit > 0 && len(m.repoList)+len(msg.repos) >= m.cfg.Limit {
+				m.hasMorePages = false
+			}
+
+			seen := make(map[string]bool, len(m.repoList))
+			for _, r := range m.repoList {
+				seen[strings.ToLower(r.Owner+"/"+r.Name)] = true
+			}
+
+			baseIdx := len(m.repoList)
+			for _, r := range msg.repos {
+				key := strings.ToLower(r.Owner + "/" + r.Name)
+				if !seen[key] {
+					seen[key] = true
+					r.Index = baseIdx
+					baseIdx++
+					m.repoList = append(m.repoList, r)
+				}
+			}
+
+			query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+			if query == "" {
+				m.filteredRepos = m.repoList
+			} else {
+				var matched []Repo
+				for _, r := range m.repoList {
+					nameMatch := strings.Contains(strings.ToLower(r.Name), query)
+					ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
+					langMatch := strings.Contains(strings.ToLower(r.Language), query)
+					descMatch := strings.Contains(strings.ToLower(r.Description), query)
+					if nameMatch || ownerMatch || langMatch || descMatch {
+						matched = append(matched, r)
+					}
+				}
+				m.filteredRepos = matched
+			}
+
+			limit := len(m.filteredRepos)
+			if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
+				limit = m.cfg.Limit
+			}
+			rows := BuildTableRows(m.filteredRepos, limit, m.userProfile != nil)
+			m.table.SetRows(rows)
+		} else {
+			m.hasMorePages = false
+		}
+		return m, nil
 	}
 
 	if m.state != stateDashboard {
@@ -432,12 +588,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
 
-	if m.table.Cursor() != prevCursor {
-		m.setFileList()
-		m.updateReadmeContent()
+	if cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 
-	return m, cmd
+	newCursor := m.table.Cursor()
+	if newCursor != prevCursor {
+		repos := m.activeRepoList()
+		if newCursor >= 0 && newCursor < len(repos) {
+			currRepo := repos[newCursor]
+			m.setFileList()
+			m.updateReadmeContent()
+
+			if !currRepo.DetailsLoaded {
+				m.cursorDebounceID++
+				dID := m.cursorDebounceID
+				cmds = append(cmds, debounceCursorCmd(dID, newCursor, 180*time.Millisecond))
+			}
+
+			if m.userProfile != nil && m.hasMorePages && !m.loadingNextPage && m.cfg != nil && m.cfg.User != "" {
+				if newCursor >= len(repos)-4 {
+					m.loadingNextPage = true
+					cmds = append(cmds, fetchNextPageCmd(m.cfg.User, m.cfg.Language, m.currentPage+1))
+				}
+			}
+		}
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) recalculateLayout(width, height int) {
@@ -522,7 +700,11 @@ func (m *Model) updateReadmeContent() {
 
 	rawMD := repos[cursor].ReadMe
 	if strings.TrimSpace(rawMD) == "" {
-		rawMD = "_No README found for this repository._"
+		if !repos[cursor].DetailsLoaded {
+			rawMD = fmt.Sprintf("# %s\n\n_Loading repository details..._\n\n%s", repos[cursor].Name, repos[cursor].Description)
+		} else {
+			rawMD = "_No README found for this repository._"
+		}
 	} else {
 		rawMD = utils.CleanMarkdown(rawMD)
 	}
@@ -810,6 +992,16 @@ func (m Model) renderStatusBar(width int) string {
 			Render(m.toastMessage)
 	}
 
+	var loadingPill string
+	if m.loadingNextPage {
+		loadingPill = lipgloss.NewStyle().
+			Foreground(m.theme.Primary).
+			Background(m.theme.Surface).
+			Bold(true).
+			Padding(0, 1).
+			Render("⏳ Loading more...")
+	}
+
 	var rateLimitPill string
 	rlInfo := ghclient.GetRateLimitInfo()
 	if text, isWarn, isCrit := rlInfo.FormatRateLimitIndicator(); text != "" {
@@ -834,10 +1026,13 @@ func (m Model) renderStatusBar(width int) string {
 		rateLimitPill = rlStyle.Render(text)
 	}
 
-	// Build full status item list in priority order: Tabs > Toast > Frequency > User > Theme > RateLimit
+	// Build full status item list in priority order: Tabs > Toast > Loading > Frequency > User > Theme > RateLimit
 	statusItems := []string{tab1, tab2, tab3}
 	if toastPill != "" {
 		statusItems = append(statusItems, " ", toastPill)
+	}
+	if loadingPill != "" {
+		statusItems = append(statusItems, " ", loadingPill)
 	}
 	if freqPill != "" {
 		statusItems = append(statusItems, " ", freqPill)

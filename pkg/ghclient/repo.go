@@ -176,6 +176,7 @@ type Repo struct {
 	Pinned             bool              `json:"pinned,omitempty"`
 	UserProfile        *UserProfile      `json:"user_profile,omitempty"`
 	RecentCommits      []Commit          `json:"recent_commits,omitempty"`
+	DetailsLoaded      bool              `json:"details_loaded,omitempty"`
 }
 
 type ExtraInfor struct {
@@ -192,27 +193,51 @@ type EntryInfor struct {
 
 type RepoList []Repo
 
+// LoadDetails fetches and populates Readme, RootInfo, ExtraInfo, LanguagesBreakdown,
+// and RecentCommits for the repository. If DetailsLoaded is already true, it returns immediately.
+func (r *Repo) LoadDetails() error {
+	if r.DetailsLoaded {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, 6)
+	signal := make(chan struct{})
+
+	wg.Add(6)
+	go r.loadHtmlPageTerm(errChan, &wg, signal)
+	go r.loadReadMe(errChan, &wg, signal)
+	go r.loadRootInfo(errChan, &wg, signal)
+	go r.loadExtraInfo(errChan, &wg, signal)
+	go r.loadLanguageBreakdown(errChan, &wg, signal)
+	go r.loadCommits(errChan, &wg, signal)
+
+	wg.Wait()
+	r.HtmlPageTerm = ""
+	r.DetailsLoaded = true
+
+	close(errChan)
+	if len(errChan) > 0 {
+		return <-errChan
+	}
+	return nil
+}
+
 func (repos RepoList) loadDetails() error {
 	var wg sync.WaitGroup
-	errChan := make(chan error, 6*len(repos)+1)
+	errChan := make(chan error, len(repos)+1)
 
 	for i := range repos {
-		signal := make(chan struct{})
 		repo := &repos[i]
-
-		wg.Add(6)
-		go repo.loadHtmlPageTerm(errChan, &wg, signal)
-		go repo.loadReadMe(errChan, &wg, signal)
-		go repo.loadRootInfo(errChan, &wg, signal)
-		go repo.loadExtraInfo(errChan, &wg, signal)
-		go repo.loadLanguageBreakdown(errChan, &wg, signal)
-		go repo.loadCommits(errChan, &wg, signal)
+		wg.Add(1)
+		go func(r *Repo) {
+			defer wg.Done()
+			if err := r.LoadDetails(); err != nil {
+				sendErrorNonBlocking(errChan, err)
+			}
+		}(repo)
 	}
 	wg.Wait()
-
-	for i := range repos {
-		repos[i].HtmlPageTerm = ""
-	}
 
 	close(errChan)
 	if len(errChan) > 0 {

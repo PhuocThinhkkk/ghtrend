@@ -240,3 +240,22 @@ func TestFetchCommitsFromAPI_Success(t *testing.T) {
 	}
 }
 
+func TestRepo_LoadDetails_AlreadyLoaded(t *testing.T) {
+	r := &Repo{
+		Owner:         "testowner",
+		Name:          "testrepo",
+		DetailsLoaded: true,
+		ReadMe:        "cached readme",
+	}
+
+	// Should return immediately without making network calls
+	err := r.LoadDetails()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.ReadMe != "cached readme" {
+		t.Errorf("expected cached readme to remain unchanged, got %q", r.ReadMe)
+	}
+}
+
+
