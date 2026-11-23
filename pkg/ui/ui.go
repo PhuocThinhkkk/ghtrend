@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -52,23 +53,72 @@ type Model struct {
 	table          table.Model
 	list           list.Model
 	repoList       []Repo
+	filteredRepos  []Repo
 	viewport       viewport.Model
 	active         activeComponent
 	width          int
 	height         int
 	err            error
 	userProfile    *ghclient.UserProfile
+	filtering      bool
+	filterInput    textinput.Model
+	toastMessage   string
+	toastID        int
+}
+
+func (m *Model) activeRepoList() []Repo {
+	if m.filteredRepos != nil {
+		return m.filteredRepos
+	}
+	return m.repoList
 }
 
 func (m *Model) getCursorRepo() Repo {
+	repos := m.activeRepoList()
 	cursor := m.table.Cursor()
-	if cursor < 0 || cursor >= len(m.repoList) {
-		if len(m.repoList) > 0 {
-			return m.repoList[0]
+	if cursor < 0 || cursor >= len(repos) {
+		if len(repos) > 0 {
+			return repos[0]
 		}
 		return Repo{}
 	}
-	return m.repoList[cursor]
+	return repos[cursor]
+}
+
+type clearToastMsg struct {
+	id int
+}
+
+func clearToastCmd(id int, d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return clearToastMsg{id: id}
+	})
+}
+
+func (m *Model) applyFilter() {
+	query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+	if query == "" {
+		m.filteredRepos = m.repoList
+	} else {
+		var matched []Repo
+		for _, r := range m.repoList {
+			nameMatch := strings.Contains(strings.ToLower(r.Name), query)
+			ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
+			langMatch := strings.Contains(strings.ToLower(r.Language), query)
+			descMatch := strings.Contains(strings.ToLower(r.Description), query)
+			if nameMatch || ownerMatch || langMatch || descMatch {
+				matched = append(matched, r)
+			}
+		}
+		m.filteredRepos = matched
+	}
+
+	limit := len(m.filteredRepos)
+	if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
+		limit = m.cfg.Limit
+	}
+	m.table = InitialTable(m.filteredRepos, limit, m.theme)
+	m.recalculateLayout(m.width, m.height)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -96,7 +146,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case clearToastMsg:
+		if msg.id == m.toastID {
+			m.toastMessage = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		if msg.Type == tea.KeyCtrlC {
+			return m, tea.Quit
+		}
+
 		if m.showThemeModal {
 			switch msg.String() {
 			case "esc", "t", "q":
@@ -120,9 +180,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.filtering {
+			switch msg.String() {
+			case "esc":
+				m.filtering = false
+				m.filterInput.Reset()
+				m.filterInput.Blur()
+				m.applyFilter()
+				return m, nil
+			case "enter":
+				m.filtering = false
+				m.filterInput.Blur()
+				return m, nil
+			default:
+				var tiCmd tea.Cmd
+				m.filterInput, tiCmd = m.filterInput.Update(msg)
+				m.applyFilter()
+				return m, tiCmd
+			}
+		}
+
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
+		case "esc":
+			if m.state == stateDashboard && m.filterInput.Value() != "" {
+				m.filterInput.Reset()
+				m.filterInput.Blur()
+				m.applyFilter()
+				return m, nil
+			}
+		case "/":
+			if m.state == stateDashboard {
+				m.filtering = true
+				m.filterInput.Focus()
+				return m, textinput.Blink
+			}
+		case "o":
+			if m.state == stateDashboard {
+				repo := m.getCursorRepo()
+				if repo.Url != "" {
+					m.toastID++
+					id := m.toastID
+					if err := utils.OpenBrowser(repo.Url); err != nil {
+						m.toastMessage = "❌ Failed to open browser"
+					} else {
+						repoName := repo.Name
+						if len(repoName) > 25 {
+							repoName = repoName[:22] + "..."
+						}
+						m.toastMessage = fmt.Sprintf("🌐 Opened %s", repoName)
+					}
+					return m, clearToastCmd(id, 2*time.Second)
+				}
+			}
+		case "y":
+			if m.state == stateDashboard {
+				repo := m.getCursorRepo()
+				if repo.Url != "" {
+					m.toastID++
+					id := m.toastID
+					if err := utils.CopyToClipboard(repo.Url); err != nil {
+						m.toastMessage = "❌ Failed to copy to clipboard"
+					} else {
+						m.toastMessage = "📋 Copied URL!"
+					}
+					return m, clearToastCmd(id, 2*time.Second)
+				}
+			}
 		case "t":
 			if m.state == stateDashboard {
 				m.showThemeModal = true
@@ -207,6 +332,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.userProfile = msg.repos[0].UserProfile
 		}
 
+		ti := textinput.New()
+		ti.Placeholder = "type to filter..."
+		ti.Prompt = ""
+		ti.CharLimit = 50
+		ti.Width = 30
+		m.filterInput = ti
+		m.filteredRepos = msg.repos
 		m.repoList = msg.repos
 		m.table = InitialTable(msg.repos, limit, m.theme)
 		m.list = InitialFileList(msg.repos[0].RootInfor)
@@ -233,6 +365,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.state != stateDashboard {
 		return m, nil
+	}
+
+	if m.filtering {
+		var tiCmd tea.Cmd
+		m.filterInput, tiCmd = m.filterInput.Update(msg)
+		return m, tiCmd
 	}
 
 	prevCursor := m.table.Cursor()
@@ -334,15 +472,17 @@ func (m *Model) recalculateLayout(width, height int) {
 }
 
 func (m *Model) updateReadmeContent() {
-	if len(m.repoList) == 0 {
+	repos := m.activeRepoList()
+	if len(repos) == 0 {
+		m.viewport.SetContent("_No repositories match the current filter._")
 		return
 	}
 	cursor := m.table.Cursor()
-	if cursor < 0 || cursor >= len(m.repoList) {
+	if cursor < 0 || cursor >= len(repos) {
 		return
 	}
 
-	rawMD := m.repoList[cursor].ReadMe
+	rawMD := repos[cursor].ReadMe
 	if strings.TrimSpace(rawMD) == "" {
 		rawMD = "_No README found for this repository._"
 	} else {
@@ -604,6 +744,29 @@ func (m Model) renderDashboardView(width, height int) string {
 }
 
 func (m Model) renderStatusBar(width int) string {
+	if m.filtering {
+		filterPrompt := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render("🔍 Filter: ")
+		filterInputView := m.filterInput.View()
+		filterHelp := lipgloss.NewStyle().Foreground(m.theme.Muted).Render("[Enter] Apply  [Esc] Clear")
+		leftPart := lipgloss.JoinHorizontal(lipgloss.Left, filterPrompt, filterInputView)
+		gap := width - lipgloss.Width(leftPart) - lipgloss.Width(filterHelp)
+		if gap < 1 {
+			filterHelp = lipgloss.NewStyle().Foreground(m.theme.Muted).Render("[Enter]")
+			gap = width - lipgloss.Width(leftPart) - lipgloss.Width(filterHelp)
+		}
+		if gap < 1 {
+			filterHelp = ""
+			gap = max(1, width-lipgloss.Width(leftPart))
+		}
+		bar := lipgloss.JoinHorizontal(lipgloss.Center, leftPart, strings.Repeat(" ", max(1, gap)), filterHelp)
+		return lipgloss.NewStyle().
+			Width(width).
+			Height(1).
+			MaxHeight(1).
+			Background(m.theme.Background).
+			Render(bar)
+	}
+
 	activeTabStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(m.theme.Background).
@@ -633,22 +796,44 @@ func (m Model) renderStatusBar(width int) string {
 		Padding(0, 1).
 		Render(fmt.Sprintf("🎨 %s [t]", m.theme.ID))
 
-	statusItems := []string{tab1, tab2, tab3, " ", themePill}
+	var userPill string
 	if m.cfg != nil && m.cfg.User != "" {
-		userPill := lipgloss.NewStyle().
+		userPill = lipgloss.NewStyle().
 			Foreground(m.theme.Accent).
 			Background(m.theme.Surface).
 			Bold(true).
 			Padding(0, 1).
 			Render(fmt.Sprintf("👤 @%s", m.cfg.User))
+	}
+
+	var toastPill string
+	if m.toastMessage != "" {
+		toastPill = lipgloss.NewStyle().
+			Foreground(m.theme.Background).
+			Background(m.theme.Accent).
+			Bold(true).
+			Padding(0, 1).
+			Render(m.toastMessage)
+	}
+
+	// Build full status item list in priority order: Tabs > Toast > User > Theme
+	statusItems := []string{tab1, tab2, tab3}
+	if toastPill != "" {
+		statusItems = append(statusItems, " ", toastPill)
+	}
+	if userPill != "" {
 		statusItems = append(statusItems, " ", userPill)
 	}
+	statusItems = append(statusItems, " ", themePill)
 
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 
-	helpStr := "[Tab] Cycle  [1-3] Focus  [t] Theme  [q] Quit"
-	if width < 120 {
-		helpStr = "[Tab] Focus  [t] Theme  [q] Quit"
+	helpStr := "[/] Filter  [o] Open  [y] Copy  [Tab] Focus  [t] Theme  [q] Quit"
+	if width < 140 {
+		helpStr = "[/] Filter  [o] Open  [y] Copy  [Tab] Focus  [q] Quit"
+	}
+	if width < 115 {
+		helpStr = "[/] Filter  [o] Open  [Tab] Focus  [q] Quit"
 	}
 	if width < 95 {
 		helpStr = "[Tab] Nav  [q] Quit"
@@ -660,12 +845,24 @@ func (m Model) renderStatusBar(width int) string {
 	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 
+	// Step 1: if too tight, simplify help string first
 	if gap < 1 && width >= 80 {
 		helpStr = "[q] Quit"
 		helpText = lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
 		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 	}
 
+	// Step 2: if still tight, drop theme and user pills, prioritizing toast
+	if gap < 1 {
+		statusItems = []string{tab1, tab2, tab3}
+		if toastPill != "" {
+			statusItems = append(statusItems, " ", toastPill)
+		}
+		tabs = lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
+		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
+	}
+
+	// Step 3: if still tight on very narrow terminals (<65), drop toast
 	if gap < 1 {
 		statusItems = []string{tab1, tab2, tab3}
 		tabs = lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
