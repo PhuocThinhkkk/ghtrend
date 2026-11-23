@@ -470,7 +470,7 @@ func (m *Model) recalculateLayout(width, height int) {
 			m.list.SetHeight(max(1, lowerHeight-2))
 
 			m.viewport.Width = max(20, leftWidth-4)
-			m.viewport.Height = max(1, readmeH-4)
+			m.viewport.Height = max(1, readmeH-2)
 		} else {
 			tableHeight := max(6, min(12, availH*38/100))
 			lowerHeight := availH - tableHeight
@@ -482,7 +482,7 @@ func (m *Model) recalculateLayout(width, height int) {
 			m.list.SetHeight(max(1, lowerHeight-2))
 
 			m.viewport.Width = max(20, rightWidth-4)
-			m.viewport.Height = max(1, availH-4)
+			m.viewport.Height = max(1, availH-2)
 		}
 	} else {
 		contentWidth := width
@@ -496,7 +496,7 @@ func (m *Model) recalculateLayout(width, height int) {
 		m.list.SetHeight(max(1, lowerHeight-2))
 
 		m.viewport.Width = max(20, contentWidth-4)
-		m.viewport.Height = max(1, availH-4)
+		m.viewport.Height = max(1, availH-2)
 	}
 
 	m.setFileList()
@@ -666,21 +666,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			profileH, readmeH := userProfileLayoutHeights(availH)
 
 			profileCard := m.renderUserProfileCard(leftWidth, profileH, m.theme)
-
-			readmeBorder := lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.Border).
-				Width(leftWidth - 2).
-				Height(readmeH - 2).
-				MaxHeight(readmeH)
-
-			if m.active == readmeActive {
-				readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
-			}
-			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
-			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			readmeRendered := readmeBorder.Render(readmeContent)
-
+			readmeRendered := WrapInTitledBorder(m.viewport.View(), leftWidth, readmeH, "Readme Preview", m.active == readmeActive, m.theme)
 			left := lipgloss.JoinVertical(lipgloss.Left, profileCard, readmeRendered)
 
 			tableHeight := max(6, min(12, availH*38/100))
@@ -711,19 +697,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 
-			readmeBorder := lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.Border).
-				Width(rightWidth - 2).
-				Height(availH - 2).
-				MaxHeight(availH)
-
-			if m.active == readmeActive {
-				readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
-			}
-			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
-			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			right := readmeBorder.Render(readmeContent)
+			right := WrapInTitledBorder(m.viewport.View(), rightWidth, availH, "Readme Preview", m.active == readmeActive, m.theme)
 
 			mainView = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 		}
@@ -734,15 +708,7 @@ func (m Model) renderDashboardView(width, height int) string {
 		lowerHeight := availH - tableHeight
 
 		if m.active == readmeActive {
-			readmeBorder := lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(m.theme.FocusBorder).
-				Width(contentWidth - 2).
-				Height(availH - 2).
-				MaxHeight(availH)
-			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview (Full Screen):")
-			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-			mainView = readmeBorder.Render(readmeContent)
+			mainView = WrapInTitledBorder(m.viewport.View(), contentWidth, availH, "Readme Preview", true, m.theme)
 		} else {
 			fileListWidth := max(22, contentWidth*42/100)
 			metricsWidth := contentWidth - fileListWidth
