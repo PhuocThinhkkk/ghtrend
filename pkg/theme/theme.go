@@ -48,7 +48,7 @@ var Catalog = []Theme{
 		Text:        lipgloss.Color("#C0CAF5"),
 		Muted:       lipgloss.Color("#565F89"),
 		Accent:      lipgloss.Color("#9ECE6A"),
-		Glamour:     "dark",
+		Glamour:     "tokyo-night",
 	},
 	{
 		ID:          "dracula",
