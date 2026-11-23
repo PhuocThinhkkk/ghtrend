@@ -69,7 +69,7 @@ func TestRenderMetricsLanguagesAndCommits(t *testing.T) {
 func TestRenderContributionHeatmap(t *testing.T) {
 	th := theme.Catalog[1]
 	days := []int{0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3}
-	out := renderContributionHeatmap(days, "847", 18, 10, th)
+	out := renderContributionHeatmap(days, "847", 18, 10, 45, th)
 
 	if len(out) == 0 {
 		t.Fatal("expected non-empty heatmap")
