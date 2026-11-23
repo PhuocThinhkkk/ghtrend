@@ -118,7 +118,7 @@ func (m *Model) applyFilter() {
 	if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
 		limit = m.cfg.Limit
 	}
-	m.table = InitialTable(m.filteredRepos, limit, m.theme)
+	m.table = InitialTableWithMode(m.filteredRepos, limit, m.theme, m.userProfile != nil)
 	m.recalculateLayout(m.width, m.height)
 }
 
@@ -373,7 +373,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filterInput = ti
 		m.filteredRepos = msg.repos
 		m.repoList = msg.repos
-		m.table = InitialTable(msg.repos, limit, m.theme)
+		m.table = InitialTableWithMode(msg.repos, limit, m.theme, m.userProfile != nil)
 		m.list = InitialFileList(msg.repos[0].RootInfor)
 		m.viewport = viewport.New(70, 20)
 		m.active = tableActive
@@ -458,7 +458,7 @@ func (m *Model) recalculateLayout(width, height int) {
 		rightWidth := width - leftWidth
 
 		if m.userProfile != nil {
-			profileH := max(8, min(13, availH*42/100))
+			profileH := max(6, min(16, availH*46/100))
 			readmeH := availH - profileH
 
 			tableHeight := max(6, min(12, availH*38/100))
@@ -466,7 +466,7 @@ func (m *Model) recalculateLayout(width, height int) {
 
 			fileListWidth := max(22, min(36, rightWidth*40/100))
 
-			UpdateTableDimensions(&m.table, rightWidth, tableHeight)
+			UpdateTableDimensions(&m.table, rightWidth, tableHeight, true)
 			m.list.SetWidth(fileListWidth - 2)
 			m.list.SetHeight(max(1, lowerHeight-2))
 
@@ -478,7 +478,7 @@ func (m *Model) recalculateLayout(width, height int) {
 
 			fileListWidth := max(22, min(36, leftWidth*40/100))
 
-			UpdateTableDimensions(&m.table, leftWidth, tableHeight)
+			UpdateTableDimensions(&m.table, leftWidth, tableHeight, false)
 			m.list.SetWidth(fileListWidth - 2)
 			m.list.SetHeight(max(1, lowerHeight-2))
 
@@ -492,7 +492,7 @@ func (m *Model) recalculateLayout(width, height int) {
 
 		fileListWidth := max(22, contentWidth*42/100)
 
-		UpdateTableDimensions(&m.table, contentWidth, tableHeight)
+		UpdateTableDimensions(&m.table, contentWidth, tableHeight, m.userProfile != nil)
 		m.list.SetWidth(fileListWidth - 2)
 		m.list.SetHeight(max(1, lowerHeight-2))
 
@@ -688,15 +688,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			tableRendered := RenderTable(m.table, m.active, rightWidth, tableHeight, m.theme)
 			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
 
-			extraH := 7
-			if lowerHeight < 14 {
-				extraH = max(4, lowerHeight/2)
-			}
-			langH := lowerHeight - extraH
-
-			extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
-			language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
-			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+			metricsAndLanguages := m.renderMetricsLanguagesAndCommits(metricsWidth, lowerHeight, m.theme)
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			right := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 
@@ -711,15 +703,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			tableRendered := RenderTable(m.table, m.active, leftWidth, tableHeight, m.theme)
 			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
 
-			extraH := 7
-			if lowerHeight < 14 {
-				extraH = max(4, lowerHeight/2)
-			}
-			langH := lowerHeight - extraH
-
-			extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
-			language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
-			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+			metricsAndLanguages := m.renderMetricsLanguagesAndCommits(metricsWidth, lowerHeight, m.theme)
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 
@@ -762,15 +746,7 @@ func (m Model) renderDashboardView(width, height int) string {
 			tableRendered := RenderTable(m.table, m.active, contentWidth, tableHeight, m.theme)
 			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
 
-			extraH := 7
-			if lowerHeight < 14 {
-				extraH = max(4, lowerHeight/2)
-			}
-			langH := lowerHeight - extraH
-
-			extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
-			language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
-			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+			metricsAndLanguages := m.renderMetricsLanguagesAndCommits(metricsWidth, lowerHeight, m.theme)
 			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
 			mainView = lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
 		}
@@ -812,6 +788,7 @@ func (m Model) renderStatusBar(width int) string {
 
 	inactiveTabStyle := lipgloss.NewStyle().
 		Foreground(m.theme.Muted).
+		Background(m.theme.Surface).
 		Padding(0, 1)
 
 	tab1 := inactiveTabStyle.Render("1: Repos")
@@ -831,7 +808,7 @@ func (m Model) renderStatusBar(width int) string {
 		Foreground(m.theme.Text).
 		Background(m.theme.Surface).
 		Padding(0, 1).
-		Render(fmt.Sprintf("🎨 %s [t]", m.theme.ID))
+		Render(fmt.Sprintf("🎨 %s", m.theme.ID))
 
 	var userPill string
 	if m.cfg != nil && m.cfg.User != "" {
@@ -850,7 +827,7 @@ func (m Model) renderStatusBar(width int) string {
 			Background(m.theme.Surface).
 			Bold(true).
 			Padding(0, 1).
-			Render(fmt.Sprintf("📅 %s [d]", m.cfg.Since.DisplayTitle()))
+			Render(fmt.Sprintf("📅 %s", m.cfg.Since.DisplayTitle()))
 	}
 
 	var toastPill string
@@ -878,30 +855,61 @@ func (m Model) renderStatusBar(width int) string {
 
 	tabs := lipgloss.JoinHorizontal(lipgloss.Top, statusItems...)
 
-	helpStr := "[/] Filter  [d] Freq  [o] Open  [y] Copy  [t] Theme  [?] Help  [q] Quit"
-	if width < 145 {
-		helpStr = "[/] Filter  [d] Freq  [o] Open  [y] Copy  [t] Theme  [?] Help  [q] Quit"
-	}
-	if width < 125 {
-		helpStr = "[/] Filter  [d] Freq  [o] Open  [t] Theme  [?] Help  [q] Quit"
-	}
-	if width < 105 {
-		helpStr = "[/] Filter  [d] Freq  [o] Open  [?] Help  [q] Quit"
-	}
-	if width < 85 {
-		helpStr = "[Tab] Nav  [?] Help  [q] Quit"
-	}
-	if width < 70 {
-		helpStr = "[?] Help  [q] Quit"
+	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	bullet := lipgloss.NewStyle().Foreground(m.theme.Border).Render(" • ")
+
+	kb := func(key, desc string) string {
+		return keyStyle.Render(key) + " " + descStyle.Render(desc)
 	}
 
-	helpText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
+	var helpItems []string
+	if width >= 140 {
+		helpItems = []string{
+			kb("Tab", "cycle"),
+			kb("1-3", "focus"),
+			kb("/", "filter"),
+			kb("o", "open"),
+			kb("y", "copy"),
+			kb("t", "theme"),
+			kb("?", "help"),
+			kb("q", "quit"),
+		}
+	} else if width >= 115 {
+		helpItems = []string{
+			kb("Tab", "cycle"),
+			kb("1-3", "focus"),
+			kb("/", "filter"),
+			kb("o", "open"),
+			kb("t", "theme"),
+			kb("?", "help"),
+			kb("q", "quit"),
+		}
+	} else if width >= 95 {
+		helpItems = []string{
+			kb("Tab", "cycle"),
+			kb("1-3", "focus"),
+			kb("t", "theme"),
+			kb("q", "quit"),
+		}
+	} else if width >= 75 {
+		helpItems = []string{
+			kb("Tab", "cycle"),
+			kb("?", "help"),
+			kb("q", "quit"),
+		}
+	} else {
+		helpItems = []string{
+			kb("q", "quit"),
+		}
+	}
+	helpText := strings.Join(helpItems, bullet)
 	gap := width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 
 	// Step 1: if too tight, simplify help string first
 	if gap < 1 && width >= 80 {
-		helpStr = "[?] Help  [q] Quit"
-		helpText = lipgloss.NewStyle().Foreground(m.theme.Muted).Render(helpStr)
+		helpItems = []string{kb("?", "help"), kb("q", "quit")}
+		helpText = strings.Join(helpItems, bullet)
 		gap = width - lipgloss.Width(tabs) - lipgloss.Width(helpText)
 	}
 
