@@ -54,8 +54,10 @@ func UpdateTableDimensions(t *table.Model, width, height int) {
 		t.SetWidth(max(10, width-2))
 	}
 	if height > 0 {
-		// Table body height = box height - 4 (1 header text + 1 header bottom border + 2 outer box borders)
-		t.SetHeight(max(1, height-4))
+		// Bubbles table.SetHeight(h) sets viewport.Height = h - lipgloss.Height(headersView).
+		// Box border takes 2 lines, so the table view inside gets (height - 2) lines.
+		// Passing max(3, height-2) leaves at least 1 line for the viewport rows.
+		t.SetHeight(max(3, height-2))
 	}
 }
 
@@ -85,9 +87,13 @@ func InitialTable(repos []Repo, limit int, th theme.Theme) table.Model {
 		if limit == 0 {
 			break
 		}
+		displayName := repo.Name
+		if repo.Pinned {
+			displayName = "📌 " + repo.Name
+		}
 		rows = append(rows, table.Row{
 			repo.Owner,
-			repo.Name,
+			displayName,
 			repo.Stars,
 			repo.Forks,
 			repo.Language,

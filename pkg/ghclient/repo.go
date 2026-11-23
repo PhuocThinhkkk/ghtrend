@@ -104,6 +104,8 @@ type Repo struct {
 	ExtraInfor         ExtraInfor        `json:"extra_info"`
 	LanguagesBreakDown map[string]string `json:"language_break_down"`
 	HtmlPageTerm       string            `json:"html_page_term"`
+	Pinned             bool              `json:"pinned,omitempty"`
+	UserProfile        *UserProfile      `json:"user_profile,omitempty"`
 }
 
 type ExtraInfor struct {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -301,6 +302,101 @@ func TestLanguages_SortNumerically(t *testing.T) {
 	}
 	if !(goIdx < shellIdx && shellIdx < pyIdx) {
 		t.Errorf("expected sorted order Go (80%%) -> Shell (10.5%%) -> Python (9.5%%), got %q", rendered)
+	}
+}
+
+func TestView_UserProfileMode_NeverExceedsBounds(t *testing.T) {
+	repos := []Repo{
+		{
+			Owner:    "torvalds",
+			Name:     "linux",
+			Pinned:   true,
+			Stars:    "180,000",
+			Forks:    "54,000",
+			Language: "C",
+			ReadMe:   "# Linux Kernel",
+			RootInfor: []EntryInfor{
+				{Type: "dir", Name: "kernel"},
+				{Type: "file", Name: "Makefile"},
+			},
+			ExtraInfor: ExtraInfor{
+				TotalCommits: 1200000,
+				PullRequests: "0",
+				Issues:       "0",
+				Contributors: 25000,
+			},
+			LanguagesBreakDown: map[string]string{"C": "98.0%", "Assembly": "2.0%"},
+		},
+		{
+			Owner:    "torvalds",
+			Name:     "GuitarPedal",
+			Pinned:   true,
+			Stars:    "3,200",
+			Forks:    "210",
+			Language: "C",
+		},
+	}
+
+	profile := &ghclient.UserProfile{
+		Username:    "torvalds",
+		Name:        "Linus Torvalds",
+		Bio:         "Creator of Linux and Git",
+		AvatarASCII: "  ╭──────────╮  \n  │  ╭────╮  │  \n  │  │ ◉◉ │  │  \n  ╰──────────╯  ",
+		Followers:   "230k",
+		Following:   "0",
+		Location:    "Portland, OR",
+		Company:     "Linux Foundation",
+		PinnedRepos: []string{"linux", "GuitarPedal"},
+	}
+
+	widths := []int{70, 80, 110, 120, 140, 160}
+	heights := []int{16, 20, 24, 28, 30, 40}
+	th := theme.Catalog[0]
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, act := range []activeComponent{tableActive, listActive, readmeActive} {
+				tbl := InitialTable(repos, 10, th)
+				lst := InitialFileList(repos[0].RootInfor)
+				vp := viewport.New(60, 20)
+
+				m := Model{
+					state:       stateDashboard,
+					theme:       th,
+					table:       tbl,
+					list:        lst,
+					repoList:    repos,
+					viewport:    vp,
+					active:      act,
+					width:       w,
+					height:      h,
+					cfg:         &flags.CmdConfig{User: "torvalds"},
+					userProfile: profile,
+				}
+				m.recalculateLayout(w, h)
+				v := m.View()
+
+				actualH := lipgloss.Height(v)
+				actualW := lipgloss.Width(v)
+
+				if actualH > h {
+					t.Errorf("UserProfile Size=%dx%d Active=%d: view height %d exceeds terminal height %d", w, h, act, actualH, h)
+				}
+				if actualW > w {
+					t.Errorf("UserProfile Size=%dx%d Active=%d: view width %d exceeds terminal width %d", w, h, act, actualW, w)
+				}
+
+				if w >= 110 {
+					// Verify pinned indicator and user profile elements appear
+					if !strings.Contains(v, "Linus Torvalds") {
+						t.Errorf("Size=%dx%d: expected view to contain 'Linus Torvalds'", w, h)
+					}
+					if !strings.Contains(v, "📌") {
+						t.Errorf("Size=%dx%d: expected view to contain pinned indicator '📌'", w, h)
+					}
+				}
+			}
+		}
 	}
 }
 

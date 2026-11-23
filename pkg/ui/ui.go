@@ -57,6 +57,7 @@ type Model struct {
 	width          int
 	height         int
 	err            error
+	userProfile    *ghclient.UserProfile
 }
 
 func (m *Model) getCursorRepo() Repo {
@@ -202,6 +203,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			limit = m.cfg.Limit
 		}
 
+		if len(msg.repos) > 0 && msg.repos[0].UserProfile != nil {
+			m.userProfile = msg.repos[0].UserProfile
+		}
+
 		m.repoList = msg.repos
 		m.table = InitialTable(msg.repos, limit, m.theme)
 		m.list = InitialFileList(msg.repos[0].RootInfor)
@@ -281,17 +286,34 @@ func (m *Model) recalculateLayout(width, height int) {
 		leftWidth := max(55, min(85, width*52/100))
 		rightWidth := width - leftWidth
 
-		tableHeight := max(6, min(12, availH*38/100))
-		lowerHeight := availH - tableHeight
+		if m.userProfile != nil {
+			profileH := max(8, min(13, availH*42/100))
+			readmeH := availH - profileH
 
-		fileListWidth := max(22, min(36, leftWidth*40/100))
+			tableHeight := max(6, min(12, availH*38/100))
+			lowerHeight := availH - tableHeight
 
-		UpdateTableDimensions(&m.table, leftWidth, tableHeight)
-		m.list.SetWidth(fileListWidth - 2)
-		m.list.SetHeight(max(1, lowerHeight-2))
+			fileListWidth := max(22, min(36, rightWidth*40/100))
 
-		m.viewport.Width = max(20, rightWidth-4)
-		m.viewport.Height = max(1, availH-4)
+			UpdateTableDimensions(&m.table, rightWidth, tableHeight)
+			m.list.SetWidth(fileListWidth - 2)
+			m.list.SetHeight(max(1, lowerHeight-2))
+
+			m.viewport.Width = max(20, leftWidth-4)
+			m.viewport.Height = max(1, readmeH-4)
+		} else {
+			tableHeight := max(6, min(12, availH*38/100))
+			lowerHeight := availH - tableHeight
+
+			fileListWidth := max(22, min(36, leftWidth*40/100))
+
+			UpdateTableDimensions(&m.table, leftWidth, tableHeight)
+			m.list.SetWidth(fileListWidth - 2)
+			m.list.SetHeight(max(1, lowerHeight-2))
+
+			m.viewport.Width = max(20, rightWidth-4)
+			m.viewport.Height = max(1, availH-4)
+		}
 	} else {
 		contentWidth := width
 		tableHeight := max(6, min(10, availH*38/100))
@@ -458,42 +480,88 @@ func (m Model) renderDashboardView(width, height int) string {
 		leftWidth := max(55, min(85, width*52/100))
 		rightWidth := width - leftWidth
 
-		tableHeight := max(6, min(12, availH*38/100))
-		lowerHeight := availH - tableHeight
+		if m.userProfile != nil {
+			profileH := max(8, min(13, availH*42/100))
+			readmeH := availH - profileH
 
-		fileListWidth := max(22, min(36, leftWidth*40/100))
-		metricsWidth := leftWidth - fileListWidth
+			profileCard := m.renderUserProfileCard(leftWidth, profileH, m.theme)
 
-		tableRendered := RenderTable(m.table, m.active, leftWidth, tableHeight, m.theme)
-		fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
+			readmeBorder := lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(m.theme.Border).
+				Width(leftWidth - 2).
+				Height(readmeH - 2).
+				MaxHeight(readmeH)
 
-		extraH := 7
-		if lowerHeight < 14 {
-			extraH = max(4, lowerHeight/2)
+			if m.active == readmeActive {
+				readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
+			}
+			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
+			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
+			readmeRendered := readmeBorder.Render(readmeContent)
+
+			left := lipgloss.JoinVertical(lipgloss.Left, profileCard, readmeRendered)
+
+			tableHeight := max(6, min(12, availH*38/100))
+			lowerHeight := availH - tableHeight
+
+			fileListWidth := max(22, min(36, rightWidth*40/100))
+			metricsWidth := rightWidth - fileListWidth
+
+			tableRendered := RenderTable(m.table, m.active, rightWidth, tableHeight, m.theme)
+			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
+
+			extraH := 7
+			if lowerHeight < 14 {
+				extraH = max(4, lowerHeight/2)
+			}
+			langH := lowerHeight - extraH
+
+			extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
+			language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
+			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
+			right := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
+
+			mainView = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+		} else {
+			tableHeight := max(6, min(12, availH*38/100))
+			lowerHeight := availH - tableHeight
+
+			fileListWidth := max(22, min(36, leftWidth*40/100))
+			metricsWidth := leftWidth - fileListWidth
+
+			tableRendered := RenderTable(m.table, m.active, leftWidth, tableHeight, m.theme)
+			fileListRendered := RenderFileList(m.list, m.active, fileListWidth, lowerHeight, m.theme)
+
+			extraH := 7
+			if lowerHeight < 14 {
+				extraH = max(4, lowerHeight/2)
+			}
+			langH := lowerHeight - extraH
+
+			extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
+			language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
+			metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
+			detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
+			left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
+
+			readmeBorder := lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(m.theme.Border).
+				Width(rightWidth - 2).
+				Height(availH - 2).
+				MaxHeight(availH)
+
+			if m.active == readmeActive {
+				readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
+			}
+			readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
+			readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
+			right := readmeBorder.Render(readmeContent)
+
+			mainView = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 		}
-		langH := lowerHeight - extraH
-
-		extra := m.renderExtraInfor(metricsWidth, extraH, m.theme)
-		language := m.renderLanguagesBreakDown(metricsWidth, langH, m.theme)
-		metricsAndLanguages := lipgloss.JoinVertical(lipgloss.Left, extra, language)
-		detailSection := lipgloss.JoinHorizontal(lipgloss.Top, fileListRendered, metricsAndLanguages)
-		left := lipgloss.JoinVertical(lipgloss.Left, tableRendered, detailSection)
-
-		readmeBorder := lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(m.theme.Border).
-			Width(rightWidth - 2).
-			Height(availH - 2).
-			MaxHeight(availH)
-
-		if m.active == readmeActive {
-			readmeBorder = readmeBorder.BorderForeground(m.theme.FocusBorder)
-		}
-		readmeTitle := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Render("Readme Preview:")
-		readmeContent := lipgloss.JoinVertical(lipgloss.Left, readmeTitle, m.viewport.View())
-		right := readmeBorder.Render(readmeContent)
-
-		mainView = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	} else {
 		// Compact Mode (width < 110)
 		contentWidth := width
