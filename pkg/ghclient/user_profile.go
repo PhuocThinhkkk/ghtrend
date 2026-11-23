@@ -21,6 +21,7 @@ type UserProfile struct {
 	AvatarURL          string   `json:"avatar_url"`
 	AvatarASCII        string   `json:"avatar_ascii"`
 	AvatarHalfBlock    string   `json:"avatar_half_block,omitempty"`
+	AvatarBraille      string   `json:"avatar_braille,omitempty"`
 	Company            string   `json:"company"`
 	Location           string   `json:"location"`
 	Followers          string   `json:"followers"`
@@ -57,16 +58,30 @@ func GetUserProfile(username string) (*UserProfile, error) {
 		_ = fetchUserProfileFromAPI(username, profile)
 	}
 
-	// 3. Render avatar to ASCII and High-Resolution Half-Block art (cached on disk)
-	if profile.AvatarURL != "" {
-		profile.AvatarASCII = ascii.AvatarToASCII(profile.AvatarURL, 22, 9)
-		profile.AvatarHalfBlock = ascii.AvatarToHalfBlock(profile.AvatarURL, 28, 14)
-	} else {
-		profile.AvatarASCII = ascii.FallbackSilhouetteASCII(22, 9)
-		profile.AvatarHalfBlock = ascii.FallbackSilhouetteHalfBlock(28, 14)
-	}
+	// 3. Render avatar to ASCII, High-Resolution Half-Block, and Braille art (cached on disk)
+	profile.RefreshAvatars(28, 14)
 
 	return profile, nil
+}
+
+// RefreshAvatars re-renders the avatar in ASCII, half-block, and braille modes
+// ensuring the ANSI string is freshly computed and never served from an outdated disk cache.
+func (profile *UserProfile) RefreshAvatars(width, height int) {
+	if width <= 0 {
+		width = 28
+	}
+	if height <= 0 {
+		height = 14
+	}
+	if profile.AvatarURL != "" {
+		profile.AvatarASCII = ascii.AvatarToASCII(profile.AvatarURL, 22, 9)
+		profile.AvatarHalfBlock = ascii.AvatarToHalfBlock(profile.AvatarURL, width, height)
+		profile.AvatarBraille = ascii.AvatarToBraille(profile.AvatarURL, width, height)
+	} else {
+		profile.AvatarASCII = ascii.FallbackSilhouetteASCII(22, 9)
+		profile.AvatarHalfBlock = ascii.FallbackSilhouetteHalfBlock(width, height)
+		profile.AvatarBraille = ascii.FallbackSilhouetteBraille(width, height)
+	}
 }
 
 func scrapeUserProfile(username string, profile *UserProfile) error {
