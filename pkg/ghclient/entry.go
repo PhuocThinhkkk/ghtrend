@@ -134,7 +134,7 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 	if limit > 0 && limit < initialBatch {
 		initialBatch = limit
 	}
-	if len(repos) > initialBatch {
+	if limit <= initialBatch && len(repos) > initialBatch {
 		repos = repos[:initialBatch]
 	}
 

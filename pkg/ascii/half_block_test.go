@@ -145,3 +145,34 @@ func TestAvatarToHalfBlock_WithMockServer(t *testing.T) {
 		t.Errorf("empty URL should return fallback of requested height")
 	}
 }
+
+func TestSharpenImage_NonZeroBoundsAndAlphaClamping(t *testing.T) {
+	// Image with non-zero origin bounds
+	src := image.NewRGBA(image.Rect(10, 10, 15, 15))
+	for y := 10; y < 15; y++ {
+		for x := 10; x < 15; x++ {
+			src.Set(x, y, color.RGBA{R: 64, G: 64, B: 64, A: 64})
+		}
+	}
+
+	sharpened := SharpenImage(src)
+	if sharpened == nil {
+		t.Fatalf("expected sharpened image, got nil")
+	}
+
+	// Output must have zero-origin bounds
+	bounds := sharpened.Bounds()
+	if bounds.Min.X != 0 || bounds.Min.Y != 0 {
+		t.Errorf("expected zero-origin bounds, got %v", bounds.Min)
+	}
+
+	// Verify channel clamp: RGB must never exceed A (premultiplied color contract)
+	for y := 0; y < bounds.Dy(); y++ {
+		for x := 0; x < bounds.Dx(); x++ {
+			c := sharpened.RGBAAt(x, y)
+			if c.R > c.A || c.G > c.A || c.B > c.A {
+				t.Errorf("pixel at (%d,%d) violates color.RGBA contract: R:%d, G:%d, B:%d > A:%d", x, y, c.R, c.G, c.B, c.A)
+			}
+		}
+	}
+}

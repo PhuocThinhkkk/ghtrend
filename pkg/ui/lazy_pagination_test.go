@@ -7,6 +7,7 @@ import (
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/theme"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
@@ -201,5 +202,80 @@ func TestStatusBar_LoadingMoreIndicator(t *testing.T) {
 	bar := m.renderStatusBar(100)
 	if !strings.Contains(bar, "Loading more...") {
 		t.Errorf("expected status bar to contain 'Loading more...', got %q", bar)
+	}
+}
+
+func TestRepoDetailsLoadedMsg_IdentityMatch(t *testing.T) {
+	th := theme.GetTheme("tokyonight")
+	repos := []Repo{
+		{Owner: "user1", Name: "repo1", DetailsLoaded: true, ReadMe: "Repo 1 Readme"},
+		{Owner: "user1", Name: "repo2", DetailsLoaded: false},
+	}
+
+	m := Model{
+		state:    stateDashboard,
+		repoList: repos,
+		theme:    th,
+		table:    InitialTableWithMode(repos, 10, th, false),
+		list:     InitialFileList(nil),
+		viewport: viewport.New(70, 20),
+		width:    80,
+		height:   24,
+	}
+
+	// Move cursor to repo2 (cursor = 1)
+	m.table.SetCursor(1)
+
+	// User types a filter selecting ONLY repo2 (cursor becomes 0 in filtered view)
+	m.filteredRepos = []Repo{repos[1]}
+	m.table = InitialTableWithMode(m.filteredRepos, 10, th, false)
+	m.table.SetCursor(0)
+
+	// Details arrive for repo2 (with original msg.cursor = 1)
+	loadedRepo := repos[1]
+	loadedRepo.DetailsLoaded = true
+	loadedRepo.ReadMe = "# Repo 2 Readme After Filter"
+
+	detailsMsg := repoDetailsLoadedMsg{
+		cursor: 1, // original cursor before filter
+		owner:  "user1",
+		name:   "repo2",
+		repo:   loadedRepo,
+	}
+
+	newModel, _ := m.Update(detailsMsg)
+	m = newModel.(Model)
+
+	// Viewport should update because the identity (user1/repo2) matches current cursor repo!
+	if !strings.Contains(m.viewport.View(), "Repo 2 Readme") {
+		t.Errorf("expected viewport to update based on identity match, got %q", m.viewport.View())
+	}
+}
+
+func TestApplyFilter_SchedulesDebounceForUnloadedRepo(t *testing.T) {
+	th := theme.GetTheme("tokyonight")
+	repos := []Repo{
+		{Owner: "user1", Name: "repo1", DetailsLoaded: true},
+		{Owner: "user1", Name: "repo2", DetailsLoaded: false, Description: "unloaded repo"},
+	}
+
+	ti := textinput.New()
+	ti.SetValue("repo2")
+
+	m := Model{
+		state:       stateDashboard,
+		repoList:    repos,
+		theme:       th,
+		filterInput: ti,
+		table:       InitialTableWithMode(repos, 10, th, false),
+		list:        InitialFileList(nil),
+		viewport:    viewport.New(70, 20),
+		width:       80,
+		height:      24,
+	}
+
+	cmd := m.applyFilter()
+	if cmd == nil {
+		t.Errorf("expected debounce command to be scheduled when filter selects an unloaded repo")
 	}
 }

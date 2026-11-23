@@ -152,7 +152,7 @@ func clearToastCmd(id int, d time.Duration) tea.Cmd {
 	})
 }
 
-func (m *Model) applyFilter() {
+func (m *Model) applyFilter() tea.Cmd {
 	query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
 	if query == "" {
 		m.filteredRepos = m.repoList
@@ -176,6 +176,17 @@ func (m *Model) applyFilter() {
 	}
 	m.table = InitialTableWithMode(m.filteredRepos, limit, m.theme, m.userProfile != nil)
 	m.recalculateLayout(m.width, m.height)
+
+	repos := m.activeRepoList()
+	cursor := m.table.Cursor()
+	if cursor >= 0 && cursor < len(repos) {
+		if !repos[cursor].DetailsLoaded {
+			m.cursorDebounceID++
+			dID := m.cursorDebounceID
+			return debounceCursorCmd(dID, cursor, 180*time.Millisecond)
+		}
+	}
+	return nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -252,8 +263,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filtering = false
 				m.filterInput.Reset()
 				m.filterInput.Blur()
-				m.applyFilter()
-				return m, nil
+				cmd := m.applyFilter()
+				return m, cmd
 			case "enter":
 				m.filtering = false
 				m.filterInput.Blur()
@@ -261,8 +272,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				var tiCmd tea.Cmd
 				m.filterInput, tiCmd = m.filterInput.Update(msg)
-				m.applyFilter()
-				return m, tiCmd
+				fCmd := m.applyFilter()
+				return m, tea.Batch(tiCmd, fCmd)
 			}
 		}
 
@@ -273,8 +284,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateDashboard && m.filterInput.Value() != "" {
 				m.filterInput.Reset()
 				m.filterInput.Blur()
-				m.applyFilter()
-				return m, nil
+				cmd := m.applyFilter()
+				return m, cmd
 			}
 		case "/":
 			if m.state == stateDashboard {
@@ -353,6 +364,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateLoading
 				m.loading = newLoadingModel()
 				return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher))
+			}
+			if m.state == stateDashboard {
+				repo := m.getCursorRepo()
+				if !repo.DetailsLoaded && repo.Owner != "" && repo.Name != "" {
+					m.toastID++
+					id := m.toastID
+					m.toastMessage = "🔄 Retrying repo details..."
+					return m, tea.Batch(fetchRepoDetailsCmd(m.table.Cursor(), repo), clearToastCmd(id, 2*time.Second))
+				}
 			}
 		case "tab":
 			if m.state == stateDashboard {
@@ -476,24 +496,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case repoDetailsLoadedMsg:
-		if msg.err == nil {
-			for i := range m.repoList {
-				if m.repoList[i].Owner == msg.owner && m.repoList[i].Name == msg.name {
-					m.repoList[i] = msg.repo
+		for i := range m.repoList {
+			if m.repoList[i].Owner == msg.owner && m.repoList[i].Name == msg.name {
+				m.repoList[i] = msg.repo
+				break
+			}
+		}
+		if m.filteredRepos != nil {
+			for i := range m.filteredRepos {
+				if m.filteredRepos[i].Owner == msg.owner && m.filteredRepos[i].Name == msg.name {
+					m.filteredRepos[i] = msg.repo
 					break
 				}
 			}
-			if m.filteredRepos != nil {
-				for i := range m.filteredRepos {
-					if m.filteredRepos[i].Owner == msg.owner && m.filteredRepos[i].Name == msg.name {
-						m.filteredRepos[i] = msg.repo
-						break
-					}
-				}
-			}
-			if m.table.Cursor() == msg.cursor {
-				m.setFileList()
-				m.updateReadmeContent()
+		}
+		cursorRepo := m.getCursorRepo()
+		if cursorRepo.Owner == msg.owner && cursorRepo.Name == msg.name {
+			m.setFileList()
+			m.updateReadmeContent()
+			if msg.err != nil {
+				m.toastID++
+				id := m.toastID
+				m.toastMessage = "⚠ Failed to load details (press 'r' to retry)"
+				return m, clearToastCmd(id, 3*time.Second)
 			}
 		}
 		return m, nil
@@ -503,9 +528,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil && len(msg.repos) > 0 {
 			m.currentPage = msg.page
 			m.hasMorePages = msg.hasMore
-			if m.cfg != nil && m.cfg.Limit > 0 && len(m.repoList)+len(msg.repos) >= m.cfg.Limit {
-				m.hasMorePages = false
-			}
 
 			seen := make(map[string]bool, len(m.repoList))
 			for _, r := range m.repoList {
@@ -521,6 +543,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					baseIdx++
 					m.repoList = append(m.repoList, r)
 				}
+			}
+
+			if m.cfg != nil && m.cfg.Limit > 0 && len(m.repoList) >= m.cfg.Limit {
+				m.hasMorePages = false
 			}
 
 			query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))

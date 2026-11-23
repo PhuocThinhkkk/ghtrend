@@ -214,12 +214,12 @@ func (r *Repo) LoadDetails() error {
 
 	wg.Wait()
 	r.HtmlPageTerm = ""
-	r.DetailsLoaded = true
 
 	close(errChan)
 	if len(errChan) > 0 {
 		return <-errChan
 	}
+	r.DetailsLoaded = true
 	return nil
 }
 

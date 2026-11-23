@@ -74,6 +74,7 @@ func SharpenImage(img *image.RGBA) *image.RGBA {
 	}
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
+	minX, minY := bounds.Min.X, bounds.Min.Y
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 
 	// 3x3 unsharp convolution kernel with center weight 5:
@@ -82,29 +83,32 @@ func SharpenImage(img *image.RGBA) *image.RGBA {
 	// [  0, -1,  0 ]
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
+			srcX := minX + x
+			srcY := minY + y
 			if x == 0 || y == 0 || x == w-1 || y == h-1 {
-				dst.Set(x, y, img.At(x, y))
+				dst.Set(x, y, img.At(srcX, srcY))
 				continue
 			}
-			cCenter := img.RGBAAt(x, y)
+			cCenter := img.RGBAAt(srcX, srcY)
 			if cCenter.A < 32 {
 				dst.Set(x, y, cCenter)
 				continue
 			}
 
-			cTop := img.RGBAAt(x, y-1)
-			cBot := img.RGBAAt(x, y+1)
-			cLeft := img.RGBAAt(x-1, y)
-			cRight := img.RGBAAt(x+1, y)
+			cTop := img.RGBAAt(srcX, srcY-1)
+			cBot := img.RGBAAt(srcX, srcY+1)
+			cLeft := img.RGBAAt(srcX-1, srcY)
+			cRight := img.RGBAAt(srcX+1, srcY)
 
 			r := 5*int(cCenter.R) - int(cTop.R) - int(cBot.R) - int(cLeft.R) - int(cRight.R)
 			g := 5*int(cCenter.G) - int(cTop.G) - int(cBot.G) - int(cLeft.G) - int(cRight.G)
 			b := 5*int(cCenter.B) - int(cTop.B) - int(cBot.B) - int(cLeft.B) - int(cRight.B)
 
+			maxC := int(cCenter.A)
 			dst.Set(x, y, color.RGBA{
-				R: uint8(clampInt(r, 0, 255)),
-				G: uint8(clampInt(g, 0, 255)),
-				B: uint8(clampInt(b, 0, 255)),
+				R: uint8(clampInt(r, 0, maxC)),
+				G: uint8(clampInt(g, 0, maxC)),
+				B: uint8(clampInt(b, 0, maxC)),
 				A: cCenter.A,
 			})
 		}
