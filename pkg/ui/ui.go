@@ -30,6 +30,7 @@ const (
 	stateDashboard
 	stateError
 	stateHome
+	stateWorkspace
 )
 
 // RepoFetchResult wraps repositories returned by cache-aware fetch callbacks.
@@ -49,6 +50,7 @@ type LaunchOptions struct {
 	RefreshUser     func(username, language string) ([]Repo, error)
 	FetchDirectRepo func(owner, repo string) ([]Repo, error)
 	HistoryStore    *cache.HistoryStore
+	Workspace       *WorkspaceService
 }
 
 type activeComponent int8
@@ -100,6 +102,7 @@ type Model struct {
 	avatarMode          AvatarMode
 	launchOpts          LaunchOptions
 	home                homeModel
+	workspace           workspaceModel
 	activeTargetID      string
 	launchSeq           uint64
 	historyReqSeq       uint64
@@ -204,6 +207,7 @@ func (m *Model) setTransientToast(msg string, d time.Duration) tea.Cmd {
 func (m *Model) goHome() tea.Cmd {
 	m.launchSeq++
 	m.historyReqSeq++
+	m.workspace.seq++
 	m.cursorDebouncer.Cancel()
 	m.activeTargetID = ""
 	m.refreshingStale = false
@@ -663,6 +667,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.state == stateDashboard {
 					ApplyThemeToTable(&m.table, m.theme)
 					m.updateReadmeContent()
+				} else if m.state == stateWorkspace {
+					m.refreshWorkspaceViewerContent()
 				}
 				_ = appconfig.SaveConfig(appconfig.Config{Theme: selected.ID})
 				return m, nil
@@ -703,6 +709,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.updateHome(msg)
 		}
 
+		if m.state == stateWorkspace && m.workspace.showBranchModal {
+			return m, m.updateWorkspaceBranchModal(msg)
+		}
+
 		switch msg.String() {
 		case "q":
 			return m, tea.Quit
@@ -731,7 +741,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterInput.Focus()
 				return m, textinput.Blink
 			}
-		case "o":
+		case "enter", "o":
+			if m.state == stateDashboard {
+				repo := m.getCursorRepo()
+				if repo.Owner != "" && repo.Name != "" {
+					crumb := "Trending"
+					if m.cfg != nil {
+						if m.cfg.User != "" {
+							crumb = "@" + m.cfg.User
+						} else if m.cfg.DirectRepo != "" {
+							crumb = "Direct"
+						} else {
+							crumb = m.cfg.Since.DisplayTitle() + " Trending"
+						}
+					}
+					return m, m.openWorkspace(repo.Owner, repo.Name, crumb, stateDashboard)
+				}
+			}
+		case "O":
 			if m.state == stateDashboard {
 				repo := m.getCursorRepo()
 				if repo.Url != "" {
@@ -757,7 +784,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "t":
-			if m.state == stateDashboard || m.state == stateHome {
+			if m.state == stateDashboard || m.state == stateHome || m.state == stateWorkspace {
 				m.showThemeModal = true
 				for i, t := range theme.Catalog {
 					if t.ID == m.theme.ID {
@@ -788,7 +815,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(launchCmd, toastCmd)
 				}
 			}
-		case "?", "h":
+		case "?":
+			if m.state == stateDashboard || m.state == stateHome || m.state == stateWorkspace {
+				m.showHelpModal = true
+				return m, nil
+			}
+		case "h":
 			if m.state == stateDashboard || m.state == stateHome {
 				m.showHelpModal = true
 				return m, nil
@@ -839,12 +871,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == stateHome {
 			return m, m.updateHome(msg)
 		}
+		if m.state == stateWorkspace {
+			return m, m.updateWorkspace(msg)
+		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		if m.state == stateDashboard {
 			m.recalculateLayout(msg.Width, msg.Height)
+		} else if m.state == stateWorkspace {
+			yOff := m.workspace.viewer.YOffset
+			m.recalculateWorkspaceLayout(msg.Width, msg.Height)
+			m.refreshWorkspaceViewerContent()
+			m.workspace.viewer.SetYOffset(yOff)
 		}
 		return m, nil
 
@@ -1069,12 +1109,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hasMorePages = false
 		}
 		return m, nil
+	default:
+		if wsCmd, handled := m.handleWorkspaceMsg(msg); handled {
+			return m, wsCmd
+		}
 	}
 
 	if m.state == stateHome && m.home.isInputActive() {
 		var inCmd tea.Cmd
 		m.home.input, inCmd = m.home.input.Update(msg)
 		return m, inCmd
+	}
+	if m.state == stateWorkspace && m.workspace.showBranchModal {
+		var bfCmd tea.Cmd
+		m.workspace.branchFilter, bfCmd = m.workspace.branchFilter.Update(msg)
+		return m, bfCmd
 	}
 
 	if m.state != stateDashboard {
@@ -1291,6 +1340,8 @@ func (m Model) View() string {
 	switch m.state {
 	case stateHome:
 		return m.renderHomeView(width, height)
+	case stateWorkspace:
+		return m.renderWorkspaceView(width, height)
 	case stateLoading:
 		return m.renderLoadingView(width, height)
 	case stateError:
@@ -1823,6 +1874,33 @@ func (m Model) renderHelpModal(width, height int) string {
 				formatRow("t / ? / q", "Theme / Help / Quit"),
 			)
 		}
+	} else if m.state == stateWorkspace {
+		if height >= 22 {
+			sections = append(sections,
+				"",
+				sectionStyle.Render("WORKSPACE NAVIGATION"),
+				formatRow("Tab / 1-4", "Switch Code / PRs / Issues / Commits"),
+				formatRow("↑/↓, k/j", "Navigate tree or scroll viewer"),
+				formatRow("Enter / l", "Expand dir or open file"),
+				formatRow("← / h / Bksp", "Collapse dir / Focus tree"),
+				formatRow("Esc", "Back to previous screen"),
+				"",
+				sectionStyle.Render("WORKSPACE ACTIONS"),
+				formatRow("b", "Switch branch or tag"),
+				formatRow("R", "Return viewer to README"),
+				formatRow("O / y", "Open in browser / Copy URL"),
+				formatRow("H / ~", "Return to Home Launcher"),
+				formatRow("t / ? / q", "Theme / Help / Quit"),
+			)
+		} else {
+			sections = append(sections,
+				formatRow("Tab / 1-4", "Switch tabs"),
+				formatRow("↑/↓ / Enter", "Tree / Open file"),
+				formatRow("← / R / b", "Tree / README / Branch"),
+				formatRow("O / y / Esc", "Browser / Copy / Back"),
+				formatRow("t / ? / q", "Theme / Help / Quit"),
+			)
+		}
 	} else if height >= 26 {
 		sections = append(sections,
 			"",
@@ -1830,12 +1908,13 @@ func (m Model) renderHelpModal(width, height int) string {
 			formatRow("Tab / Shift+Tab", "Cycle focus between panes"),
 			formatRow("1, 2, 3", "Jump to Table, Files, Readme"),
 			formatRow("↑/↓, k/j", "Navigate rows or scroll"),
+			formatRow("Enter / o", "Open Repository Workspace"),
 			formatRow("H / ~", "Return to Home Launcher"),
 			"",
 			sectionStyle.Render("TRENDING & ACTIONS"),
 			formatRow("/", "Interactive in-place filter"),
 			formatRow("d / f", "Cycle Daily ⇄ Weekly ⇄ Monthly"),
-			formatRow("o", "Open repository in browser"),
+			formatRow("O", "Open repository in browser"),
 			formatRow("y", "Copy repository URL"),
 			"",
 			sectionStyle.Render("SETTINGS & SYSTEM"),
@@ -1848,11 +1927,11 @@ func (m Model) renderHelpModal(width, height int) string {
 	} else {
 		sections = append(sections,
 			formatRow("Tab / 1-3", "Cycle or jump panes"),
-			formatRow("↑/↓ / k/j", "Navigate items"),
+			formatRow("↑/↓ / Enter", "Navigate / Open Workspace"),
 			formatRow("H / ~", "Home Launcher"),
 			formatRow("/", "Fuzzy search filter"),
 			formatRow("d / f", "Cycle Daily/Weekly/Monthly"),
-			formatRow("o / y", "Open browser / Copy URL"),
+			formatRow("O / y", "Open browser / Copy URL"),
 			formatRow("a / t", "Avatar / Theme selector"),
 			formatRow("? / Esc", "Close help / Clear filter"),
 			formatRow("q", "Quit"),
