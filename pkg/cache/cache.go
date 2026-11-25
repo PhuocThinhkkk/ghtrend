@@ -77,39 +77,7 @@ func SaveCache(repos []ghclient.Repo, path string, cfg *flags.CmdConfig) error {
 		return err
 	}
 
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp cache file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	_, writeErr := tmpFile.Write(encoded)
-	closeErr := tmpFile.Close()
-	if writeErr != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write temp cache file: %w", writeErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp cache file: %w", closeErr)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		bakPath := path + ".bak"
-		_ = os.Remove(bakPath)
-		if renameBakErr := os.Rename(path, bakPath); renameBakErr == nil {
-			if renameErr := os.Rename(tmpPath, path); renameErr != nil {
-				_ = os.Rename(bakPath, path)
-				_ = os.Remove(tmpPath)
-				return fmt.Errorf("replace cache file %q: %w", path, renameErr)
-			}
-			_ = os.Remove(bakPath)
-			return nil
-		}
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace cache file %q: %w", path, err)
-	}
-	return nil
+	return writeFileAtomic(path, encoded, "cache")
 }
 
 func encodeCacheWithinLimit(allCache []CacheData, currentCfg *flags.CmdConfig) ([]byte, error) {
