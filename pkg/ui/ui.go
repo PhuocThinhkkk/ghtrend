@@ -669,6 +669,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.updateReadmeContent()
 				} else if m.state == stateWorkspace {
 					m.refreshWorkspaceViewerContent()
+					m.refreshPRDetailContent()
+					m.refreshIssueDetailContent()
 				}
 				_ = appconfig.SaveConfig(appconfig.Config{Theme: selected.ID})
 				return m, nil
@@ -711,6 +713,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.state == stateWorkspace && m.workspace.showBranchModal {
 			return m, m.updateWorkspaceBranchModal(msg)
+		}
+		if m.state == stateWorkspace && m.workspace.showCommentModal {
+			return m, m.updateWorkspaceCommentModal(msg)
 		}
 
 		switch msg.String() {
@@ -1124,6 +1129,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var bfCmd tea.Cmd
 		m.workspace.branchFilter, bfCmd = m.workspace.branchFilter.Update(msg)
 		return m, bfCmd
+	}
+	if m.state == stateWorkspace && m.workspace.showCommentModal {
+		var cmCmd tea.Cmd
+		m.workspace.commentInput, cmCmd = m.workspace.commentInput.Update(msg)
+		return m, cmCmd
 	}
 
 	if m.state != stateDashboard {
@@ -1886,8 +1896,10 @@ func (m Model) renderHelpModal(width, height int) string {
 				formatRow("Esc", "Back to previous screen"),
 				"",
 				sectionStyle.Render("WORKSPACE ACTIONS"),
-				formatRow("b", "Switch branch or tag"),
-				formatRow("R", "Return viewer to README"),
+				formatRow("b / R", "Switch branch/tag / Back to README"),
+				formatRow("f / [/]", "Cycle PR/Issue state / Page prev/next"),
+				formatRow("c / Ctrl+S", "Add comment / Submit comment"),
+				formatRow("X", "Close or reopen selected Issue"),
 				formatRow("O / y", "Open in browser / Copy URL"),
 				formatRow("H / ~", "Return to Home Launcher"),
 				formatRow("t / ? / q", "Theme / Help / Quit"),
@@ -1895,7 +1907,8 @@ func (m Model) renderHelpModal(width, height int) string {
 		} else {
 			sections = append(sections,
 				formatRow("Tab / 1-4", "Switch tabs"),
-				formatRow("↑/↓ / Enter", "Tree / Open file"),
+				formatRow("↑/↓ / Enter", "Navigate / Open item"),
+				formatRow("f / c / X", "Filter / Comment / Close Issue"),
 				formatRow("← / R / b", "Tree / README / Branch"),
 				formatRow("O / y / Esc", "Browser / Copy / Back"),
 				formatRow("t / ? / q", "Theme / Help / Quit"),
