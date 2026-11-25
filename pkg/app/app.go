@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/cache"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
@@ -22,6 +23,8 @@ func NewApp(cfg *flags.CmdConfig) *App {
 }
 
 func (app *App) Start() {
+	ghclient.SetDefaultCache(cache.NewSessionCache(256, 5*time.Minute))
+
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		log.Fatal("cant get the cache dir:", err)
