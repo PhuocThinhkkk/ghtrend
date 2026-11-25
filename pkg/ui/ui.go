@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PhuocThinhkkk/ghtrend/pkg/cache"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/appconfig"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
@@ -28,7 +29,27 @@ const (
 	stateLoading appState = iota
 	stateDashboard
 	stateError
+	stateHome
 )
+
+// RepoFetchResult wraps repositories returned by cache-aware fetch callbacks.
+type RepoFetchResult struct {
+	Repos     []Repo
+	FromCache bool
+	Stale     bool
+}
+
+// LaunchOptions configures dynamic data sources and persistent history for the TUI.
+type LaunchOptions struct {
+	Config          *flags.CmdConfig
+	InitialFetcher  func() ([]Repo, error)
+	FetchTrending   func(since flags.Frequency, language string, useCache bool) (RepoFetchResult, error)
+	RefreshTrending func(since flags.Frequency, language string) ([]Repo, error)
+	FetchUser       func(username, language string, useCache bool) (RepoFetchResult, error)
+	RefreshUser     func(username, language string) ([]Repo, error)
+	FetchDirectRepo func(owner, repo string) ([]Repo, error)
+	HistoryStore    *cache.HistoryStore
+}
 
 type activeComponent int8
 
@@ -70,13 +91,21 @@ type Model struct {
 	userProfile    *ghclient.UserProfile
 	filtering      bool
 	filterInput    textinput.Model
-	toastMessage    string
-	toastID         int
-	currentPage     int
-	hasMorePages    bool
-	loadingNextPage bool
-	cursorDebouncer Debouncer
-	avatarMode      AvatarMode
+	toastMessage        string
+	toastID             int
+	currentPage         int
+	hasMorePages        bool
+	loadingNextPage     bool
+	cursorDebouncer     Debouncer
+	avatarMode          AvatarMode
+	launchOpts          LaunchOptions
+	home                homeModel
+	activeTargetID      string
+	launchSeq           uint64
+	historyReqSeq       uint64
+	refreshingStale     bool
+	lastLaunchCmd       func() tea.Cmd
+	pendingHistoryEntry *cache.HistoryEntry
 }
 
 type debounceCursorMsg struct {
@@ -85,18 +114,20 @@ type debounceCursorMsg struct {
 }
 
 type repoDetailsLoadedMsg struct {
-	cursor int
-	owner  string
-	name   string
-	repo   Repo
-	err    error
+	launchSeq uint64
+	cursor    int
+	owner     string
+	name      string
+	repo      Repo
+	err       error
 }
 
 type nextPageLoadedMsg struct {
-	page    int
-	repos   []Repo
-	hasMore bool
-	err     error
+	launchSeq uint64
+	page      int
+	repos     []Repo
+	hasMore   bool
+	err       error
 }
 
 func (m *Model) scheduleCursorDebounce(cursor int) tea.Cmd {
@@ -105,28 +136,30 @@ func (m *Model) scheduleCursorDebounce(cursor int) tea.Cmd {
 	})
 }
 
-func fetchRepoDetailsCmd(cursor int, r Repo) tea.Cmd {
+func fetchRepoDetailsCmd(launchSeq uint64, cursor int, r Repo) tea.Cmd {
 	return func() tea.Msg {
 		repoCopy := r
 		err := repoCopy.LoadDetails()
 		return repoDetailsLoadedMsg{
-			cursor: cursor,
-			owner:  repoCopy.Owner,
-			name:   repoCopy.Name,
-			repo:   repoCopy,
-			err:    err,
+			launchSeq: launchSeq,
+			cursor:    cursor,
+			owner:     repoCopy.Owner,
+			name:      repoCopy.Name,
+			repo:      repoCopy,
+			err:       err,
 		}
 	}
 }
 
-func fetchNextPageCmd(username, language string, nextPage int) tea.Cmd {
+func fetchNextPageCmd(launchSeq uint64, username, language string, nextPage int) tea.Cmd {
 	return func() tea.Msg {
 		repos, hasMore, err := ghclient.FetchUserRepositoriesPage(username, language, nextPage)
 		return nextPageLoadedMsg{
-			page:    nextPage,
-			repos:   repos,
-			hasMore: hasMore,
-			err:     err,
+			launchSeq: launchSeq,
+			page:      nextPage,
+			repos:     repos,
+			hasMore:   hasMore,
+			err:       err,
 		}
 	}
 }
@@ -155,28 +188,287 @@ type clearToastMsg struct {
 }
 
 func clearToastCmd(id int, d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg {
+	return tea.Tick(d, func(time.Time) tea.Msg {
 		return clearToastMsg{id: id}
 	})
 }
 
-func (m *Model) applyFilter() tea.Cmd {
-	query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
-	if query == "" {
-		m.filteredRepos = m.repoList
-	} else {
-		matched := []Repo{}
-		for _, r := range m.repoList {
-			nameMatch := strings.Contains(strings.ToLower(r.Name), query)
-			ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
-			langMatch := strings.Contains(strings.ToLower(r.Language), query)
-			descMatch := strings.Contains(strings.ToLower(r.Description), query)
-			if nameMatch || ownerMatch || langMatch || descMatch {
-				matched = append(matched, r)
-			}
+func (m *Model) setTransientToast(msg string, d time.Duration) tea.Cmd {
+	m.toastID++
+	id := m.toastID
+	m.toastMessage = msg
+	return clearToastCmd(id, d)
+}
+
+func (m *Model) goHome() tea.Cmd {
+	m.launchSeq++
+	m.historyReqSeq++
+	m.cursorDebouncer.Cancel()
+	m.activeTargetID = ""
+	m.refreshingStale = false
+	m.filtering = false
+	m.filterInput.Blur()
+	m.err = nil
+	m.pendingHistoryEntry = nil
+	m.userProfile = nil
+	m.repoList = nil
+	m.filteredRepos = nil
+	m.loadingNextPage = false
+	m.hasMorePages = false
+	m.toastMessage = ""
+	m.toastID++
+	m.home.cancelInput()
+	m.state = stateHome
+	return loadHistoryCmd(m.launchOpts.HistoryStore, m.historyReqSeq)
+}
+
+func (m *Model) ensureConfig() *flags.CmdConfig {
+	if m.cfg == nil {
+		m.cfg = &flags.CmdConfig{
+			IsCache:  true,
+			Limit:    2202,
+			Since:    flags.Daily,
+			Language: "All",
 		}
-		m.filteredRepos = matched
 	}
+	return m.cfg
+}
+
+func (m *Model) launchTrending(since flags.Frequency, language string) tea.Cmd {
+	cfg := m.ensureConfig()
+	if !flags.IsValidFrequency(since) {
+		since = flags.Daily
+	}
+	lang := strings.TrimSpace(language)
+	if lang == "" {
+		lang = "All"
+	}
+	cfg.Since = since
+	cfg.Language = lang
+	cfg.User = ""
+	cfg.DirectRepo = ""
+	cfg.LaunchHome = false
+
+	m.launchSeq++
+	seq := m.launchSeq
+	targetID := fmt.Sprintf("trend:%s:%s", since, strings.ToLower(lang))
+	m.activeTargetID = targetID
+	m.refreshingStale = false
+	m.loadingNextPage = false
+	m.hasMorePages = false
+	m.toastMessage = ""
+	m.toastID++
+	m.cursorDebouncer.Cancel()
+	m.err = nil
+	m.loading = newLoadingModelWithTheme(m.theme)
+	m.state = stateLoading
+
+	label := fmt.Sprintf("%s Trending (%s)", since.DisplayTitle(), lang)
+	entry := cache.HistoryEntry{
+		Type:      cache.HistoryTypeTrend,
+		Target:    fmt.Sprintf("%s/%s", since, lang),
+		Label:     label,
+		Frequency: since,
+		Language:  lang,
+	}
+	m.pendingHistoryEntry = &entry
+
+	useCache := cfg.IsCache
+	cfgCopy := *cfg
+	fetchTrending := m.launchOpts.FetchTrending
+	refreshTrending := m.launchOpts.RefreshTrending
+	fallbackFetcher := m.fetcher
+
+	runner := func() tea.Cmd {
+		entryVal := entry
+		cfgVal := cfgCopy
+		return func() tea.Msg {
+			if fetchTrending != nil {
+				res, err := fetchTrending(since, lang, useCache)
+				var refreshFn func() ([]Repo, error)
+				if refreshTrending != nil {
+					refreshFn = func() ([]Repo, error) {
+						return refreshTrending(since, lang)
+					}
+				}
+				return reposLoadedMsg{
+					launchSeq:    seq,
+					targetID:     targetID,
+					repos:        res.Repos,
+					stale:        res.Stale,
+					err:          err,
+					refreshFn:    refreshFn,
+					historyEntry: &entryVal,
+				}
+			}
+			if fallbackFetcher != nil {
+				repos, err := fallbackFetcher()
+				return reposLoadedMsg{launchSeq: seq, targetID: targetID, repos: repos, err: err, historyEntry: &entryVal}
+			}
+			repos, err := ghclient.GetAllTrendingRepos(&cfgVal)
+			return reposLoadedMsg{launchSeq: seq, targetID: targetID, repos: repos, err: err, historyEntry: &entryVal}
+		}
+	}
+	m.lastLaunchCmd = runner
+	return tea.Batch(m.loading.Init(), runner())
+}
+
+func (m *Model) launchUser(username, language string) tea.Cmd {
+	cfg := m.ensureConfig()
+	lang := strings.TrimSpace(language)
+	if lang == "" {
+		lang = "All"
+	}
+	cfg.User = username
+	cfg.Language = lang
+	cfg.DirectRepo = ""
+	cfg.LaunchHome = false
+
+	m.launchSeq++
+	seq := m.launchSeq
+	targetID := fmt.Sprintf("user:%s:%s", strings.ToLower(username), strings.ToLower(lang))
+	m.activeTargetID = targetID
+	m.refreshingStale = false
+	m.loadingNextPage = false
+	m.hasMorePages = false
+	m.toastMessage = ""
+	m.toastID++
+	m.cursorDebouncer.Cancel()
+	m.err = nil
+	m.loading = newLoadingModelWithTheme(m.theme)
+	m.state = stateLoading
+
+	entry := cache.HistoryEntry{
+		Type:     cache.HistoryTypeUser,
+		Target:   username,
+		Label:    "@" + username,
+		Language: lang,
+	}
+	m.pendingHistoryEntry = &entry
+
+	useCache := cfg.IsCache
+	cfgCopy := *cfg
+	fetchUser := m.launchOpts.FetchUser
+	refreshUser := m.launchOpts.RefreshUser
+
+	runner := func() tea.Cmd {
+		entryVal := entry
+		cfgVal := cfgCopy
+		return func() tea.Msg {
+			if fetchUser != nil {
+				res, err := fetchUser(username, lang, useCache)
+				var refreshFn func() ([]Repo, error)
+				if refreshUser != nil {
+					refreshFn = func() ([]Repo, error) {
+						return refreshUser(username, lang)
+					}
+				}
+				return reposLoadedMsg{
+					launchSeq:    seq,
+					targetID:     targetID,
+					repos:        res.Repos,
+					stale:        res.Stale,
+					err:          err,
+					refreshFn:    refreshFn,
+					historyEntry: &entryVal,
+				}
+			}
+			repos, err := ghclient.GetUserRepositories(&cfgVal)
+			return reposLoadedMsg{launchSeq: seq, targetID: targetID, repos: repos, err: err, historyEntry: &entryVal}
+		}
+	}
+	m.lastLaunchCmd = runner
+	return tea.Batch(m.loading.Init(), runner())
+}
+
+func (m *Model) launchDirectRepo(owner, repo string) tea.Cmd {
+	cfg := m.ensureConfig()
+	slug := owner + "/" + repo
+	cfg.User = ""
+	cfg.DirectRepo = slug
+	cfg.LaunchHome = false
+
+	m.launchSeq++
+	seq := m.launchSeq
+	targetID := fmt.Sprintf("repo:%s", strings.ToLower(slug))
+	m.activeTargetID = targetID
+	m.refreshingStale = false
+	m.loadingNextPage = false
+	m.hasMorePages = false
+	m.toastMessage = ""
+	m.toastID++
+	m.cursorDebouncer.Cancel()
+	m.err = nil
+	m.loading = newLoadingModelWithTheme(m.theme)
+	m.state = stateLoading
+
+	entry := cache.HistoryEntry{
+		Type:   cache.HistoryTypeRepo,
+		Target: slug,
+		Label:  slug,
+	}
+	m.pendingHistoryEntry = &entry
+
+	fetchDirectRepo := m.launchOpts.FetchDirectRepo
+
+	runner := func() tea.Cmd {
+		entryVal := entry
+		return func() tea.Msg {
+			if fetchDirectRepo != nil {
+				repos, err := fetchDirectRepo(owner, repo)
+				return reposLoadedMsg{launchSeq: seq, targetID: targetID, repos: repos, err: err, historyEntry: &entryVal}
+			}
+			r := ghclient.Repo{
+				Owner: owner,
+				Name:  repo,
+				Url:   "https://github.com/" + owner + "/" + repo,
+			}
+			if err := r.LoadDetails(); err != nil {
+				return reposLoadedMsg{launchSeq: seq, targetID: targetID, err: err}
+			}
+			return reposLoadedMsg{launchSeq: seq, targetID: targetID, repos: []Repo{r}, historyEntry: &entryVal}
+		}
+	}
+	m.lastLaunchCmd = runner
+	return tea.Batch(m.loading.Init(), runner())
+}
+
+func refreshStaleCmd(launchSeq uint64, targetID string, fn func() ([]Repo, error)) tea.Cmd {
+	return func() tea.Msg {
+		if fn == nil {
+			return nil
+		}
+		repos, err := fn()
+		return reposLoadedMsg{
+			launchSeq:           launchSeq,
+			targetID:            targetID,
+			repos:               repos,
+			isBackgroundRefresh: true,
+			err:                 err,
+		}
+	}
+}
+
+func filterReposByQuery(repos []Repo, rawQuery string) []Repo {
+	query := strings.ToLower(strings.TrimSpace(rawQuery))
+	if query == "" {
+		return repos
+	}
+	matched := make([]Repo, 0, len(repos))
+	for _, r := range repos {
+		nameMatch := strings.Contains(strings.ToLower(r.Name), query)
+		ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
+		langMatch := strings.Contains(strings.ToLower(r.Language), query)
+		descMatch := strings.Contains(strings.ToLower(r.Description), query)
+		if nameMatch || ownerMatch || langMatch || descMatch {
+			matched = append(matched, r)
+		}
+	}
+	return matched
+}
+
+func (m *Model) applyFilter() tea.Cmd {
+	m.filteredRepos = filterReposByQuery(m.repoList, m.filterInput.Value())
 
 	limit := len(m.filteredRepos)
 	if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
@@ -195,23 +487,102 @@ func (m *Model) applyFilter() tea.Cmd {
 	return nil
 }
 
+func (m *Model) applyRefreshedRepos(repos []Repo) tea.Cmd {
+	cur := m.getCursorRepo()
+	selectedKey := strings.ToLower(cur.Owner + "/" + cur.Name)
+
+	existingBySlug := make(map[string]Repo, len(m.repoList))
+	for _, old := range m.repoList {
+		if old.DetailsLoaded {
+			existingBySlug[strings.ToLower(old.Owner+"/"+old.Name)] = old
+		}
+	}
+	merged := make([]Repo, len(repos))
+	for i, r := range repos {
+		if !r.DetailsLoaded {
+			if prev, ok := existingBySlug[strings.ToLower(r.Owner+"/"+r.Name)]; ok {
+				r.DetailsLoaded = prev.DetailsLoaded
+				r.ReadMe = prev.ReadMe
+				r.RootInfor = prev.RootInfor
+				r.ExtraInfor = prev.ExtraInfor
+				r.LanguagesBreakDown = prev.LanguagesBreakDown
+				r.RecentCommits = prev.RecentCommits
+			}
+		}
+		merged[i] = r
+	}
+
+	m.userProfile = nil
+	if len(merged) > 0 && merged[0].UserProfile != nil {
+		m.userProfile = merged[0].UserProfile
+		m.userProfile.RefreshAvatars(28, 14)
+	}
+
+	m.currentPage = 1
+	m.loadingNextPage = false
+	if m.userProfile != nil && m.cfg != nil && m.cfg.User != "" {
+		maxLimit := 2202
+		if m.cfg.Limit > 0 {
+			maxLimit = m.cfg.Limit
+		}
+		m.hasMorePages = len(merged) >= 15 && len(merged) < maxLimit
+	} else {
+		m.hasMorePages = false
+	}
+
+	m.repoList = merged
+	m.filteredRepos = filterReposByQuery(m.repoList, m.filterInput.Value())
+
+	limit := len(m.filteredRepos)
+	if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
+		limit = m.cfg.Limit
+	}
+	m.table = InitialTableWithMode(m.filteredRepos, limit, m.theme, m.userProfile != nil)
+	if selectedKey != "" {
+		active := m.activeRepoList()
+		for i, r := range active {
+			if strings.ToLower(r.Owner+"/"+r.Name) == selectedKey {
+				m.table.SetCursor(i)
+				break
+			}
+		}
+	}
+	m.recalculateLayout(m.width, m.height)
+
+	active := m.activeRepoList()
+	cursor := m.table.Cursor()
+	if cursor >= 0 && cursor < len(active) && !active[cursor].DetailsLoaded {
+		return m.scheduleCursorDebounce(cursor)
+	}
+	return nil
+}
+
 func (m Model) Init() tea.Cmd {
+	if m.state == stateHome {
+		return loadHistoryCmd(m.launchOpts.HistoryStore, m.historyReqSeq)
+	}
 	if m.state == stateLoading {
+		if m.lastLaunchCmd != nil {
+			return tea.Batch(
+				m.loading.Init(),
+				m.lastLaunchCmd(),
+			)
+		}
 		return tea.Batch(
 			m.loading.Init(),
-			fetchReposCmd(m.fetcher),
+			fetchReposCmd(m.fetcher, m.launchSeq),
 		)
 	}
 	return nil
 }
 
-func fetchReposCmd(fetcher func() ([]Repo, error)) tea.Cmd {
+func fetchReposCmd(fetcher func() ([]Repo, error), launchSeq uint64) tea.Cmd {
 	return func() tea.Msg {
 		if fetcher == nil {
-			return reposLoadedMsg{repos: nil, err: fmt.Errorf("no fetcher provided")}
+			return reposLoadedMsg{launchSeq: launchSeq, repos: nil, err: fmt.Errorf("no fetcher provided")}
 		}
 		repos, err := fetcher()
-		return reposLoadedMsg{repos: repos, err: err}
+		return reposLoadedMsg{launchSeq: launchSeq, repos: repos, err: err}
 	}
 }
 
@@ -223,6 +594,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearToastMsg:
 		if msg.id == m.toastID {
 			m.toastMessage = ""
+		}
+		return m, nil
+
+	case historyLoadedMsg:
+		if msg.seq != 0 && msg.seq != m.historyReqSeq {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.home.historyLoadFailed = true
+			return m, m.setTransientToast("⚠ Failed to load history", 2*time.Second)
+		}
+		m.home.historyLoadFailed = false
+		m.home.history = msg.entries
+		m.home.clampHistorySelection(m.homeHistoryVisibleRows())
+		return m, nil
+
+	case historyActionDoneMsg:
+		if msg.seq != 0 && msg.seq != m.historyReqSeq {
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.setTransientToast("⚠ "+msg.err.Error(), 3*time.Second)
+		}
+		m.home.historyLoadFailed = false
+		m.home.history = msg.entries
+		m.home.clampHistorySelection(m.homeHistoryVisibleRows())
+		if msg.toast != "" {
+			return m, m.setTransientToast(msg.toast, 2*time.Second)
 		}
 		return m, nil
 
@@ -246,8 +645,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selected := theme.Catalog[m.themeIndex]
 				m.theme = selected
 				m.showThemeModal = false
-				ApplyThemeToTable(&m.table, m.theme)
-				m.updateReadmeContent()
+				if m.state == stateDashboard {
+					ApplyThemeToTable(&m.table, m.theme)
+					m.updateReadmeContent()
+				}
 				_ = appconfig.SaveConfig(appconfig.Config{Theme: selected.ID})
 				return m, nil
 			}
@@ -283,20 +684,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.state == stateHome && m.home.isInputActive() {
+			return m, m.updateHome(msg)
+		}
+
 		switch msg.String() {
 		case "q":
 			return m, tea.Quit
+		case "H", "~":
+			if m.state != stateHome {
+				return m, m.goHome()
+			}
 		case "a":
 			if m.state == stateDashboard && m.userProfile != nil {
 				m.avatarMode = (m.avatarMode + 1) % 2
-				m.toastID++
-				id := m.toastID
 				if m.avatarMode == AvatarModeBraille {
-					m.toastMessage = "🖼 Avatar: Braille 4× detail mode (56×56)"
-				} else {
-					m.toastMessage = "🖼 Avatar: Full-color half-block mode (28×28)"
+					return m, m.setTransientToast("🖼 Avatar: Braille 4× detail mode (56×56)", 2*time.Second)
 				}
-				return m, clearToastCmd(id, 2*time.Second)
+				return m, m.setTransientToast("🖼 Avatar: Full-color half-block mode (28×28)", 2*time.Second)
 			}
 		case "esc":
 			if m.state == stateDashboard && m.filterInput.Value() != "" {
@@ -315,37 +720,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateDashboard {
 				repo := m.getCursorRepo()
 				if repo.Url != "" {
-					m.toastID++
-					id := m.toastID
 					if err := utils.OpenBrowser(repo.Url); err != nil {
-						m.toastMessage = "❌ Failed to open browser"
-					} else {
-						repoRunes := []rune(repo.Name)
-						repoName := repo.Name
-						if len(repoRunes) > 25 {
-							repoName = string(repoRunes[:22]) + "..."
-						}
-						m.toastMessage = fmt.Sprintf("🌐 Opened %s", repoName)
+						return m, m.setTransientToast("❌ Failed to open browser", 2*time.Second)
 					}
-					return m, clearToastCmd(id, 2*time.Second)
+					repoRunes := []rune(repo.Name)
+					repoName := repo.Name
+					if len(repoRunes) > 25 {
+						repoName = string(repoRunes[:22]) + "..."
+					}
+					return m, m.setTransientToast(fmt.Sprintf("🌐 Opened %s", repoName), 2*time.Second)
 				}
 			}
 		case "y":
 			if m.state == stateDashboard {
 				repo := m.getCursorRepo()
 				if repo.Url != "" {
-					m.toastID++
-					id := m.toastID
 					if err := utils.CopyToClipboard(repo.Url); err != nil {
-						m.toastMessage = "❌ Failed to copy to clipboard"
-					} else {
-						m.toastMessage = "📋 Copied URL!"
+						return m, m.setTransientToast("❌ Failed to copy to clipboard", 2*time.Second)
 					}
-					return m, clearToastCmd(id, 2*time.Second)
+					return m, m.setTransientToast("📋 Copied URL!", 2*time.Second)
 				}
 			}
 		case "t":
-			if m.state == stateDashboard {
+			if m.state == stateDashboard || m.state == stateHome {
 				m.showThemeModal = true
 				for i, t := range theme.Catalog {
 					if t.ID == m.theme.ID {
@@ -357,41 +754,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "d", "f":
 			if m.state == stateDashboard {
-				if m.cfg != nil && m.cfg.User != "" {
-					m.toastID++
-					id := m.toastID
-					m.toastMessage = "ℹ Frequency applies to trending mode"
-					return m, clearToastCmd(id, 2*time.Second)
+				if m.cfg != nil && (m.cfg.User != "" || m.cfg.DirectRepo != "") {
+					return m, m.setTransientToast("ℹ Frequency applies to trending mode", 2*time.Second)
 				}
 				if m.cfg != nil {
+					nextSince := flags.NextFrequency(m.cfg.Since)
+					m.cfg.Since = nextSince
+					if m.launchOpts.FetchTrending != nil {
+						launchCmd := m.launchTrending(nextSince, m.cfg.Language)
+						toastCmd := m.setTransientToast(fmt.Sprintf("📅 %s Trending", nextSince.DisplayTitle()), 2*time.Second)
+						return m, tea.Batch(launchCmd, toastCmd)
+					}
+					m.launchSeq++
 					m.cursorDebouncer.Cancel()
-					m.cfg.Since = flags.NextFrequency(m.cfg.Since)
-					m.toastID++
-					id := m.toastID
-					m.toastMessage = fmt.Sprintf("📅 %s Trending", m.cfg.Since.DisplayTitle())
 					m.state = stateLoading
-					m.loading = newLoadingModel()
-					return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher), clearToastCmd(id, 2*time.Second))
+					m.loading = newLoadingModelWithTheme(m.theme)
+					toastCmd := m.setTransientToast(fmt.Sprintf("📅 %s Trending", nextSince.DisplayTitle()), 2*time.Second)
+					return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher, m.launchSeq), toastCmd)
 				}
 			}
 		case "?", "h":
-			if m.state == stateDashboard {
+			if m.state == stateDashboard || m.state == stateHome {
 				m.showHelpModal = true
 				return m, nil
 			}
 		case "r":
 			if m.state == stateError {
 				m.state = stateLoading
-				m.loading = newLoadingModel()
-				return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher))
+				m.loading = newLoadingModelWithTheme(m.theme)
+				if m.lastLaunchCmd != nil {
+					return m, tea.Batch(m.loading.Init(), m.lastLaunchCmd())
+				}
+				return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher, m.launchSeq))
 			}
 			if m.state == stateDashboard {
 				repo := m.getCursorRepo()
 				if !repo.DetailsLoaded && repo.Owner != "" && repo.Name != "" {
-					m.toastID++
-					id := m.toastID
-					m.toastMessage = "🔄 Retrying repo details..."
-					return m, tea.Batch(fetchRepoDetailsCmd(m.table.Cursor(), repo), clearToastCmd(id, 2*time.Second))
+					toastCmd := m.setTransientToast("🔄 Retrying repo details...", 2*time.Second)
+					return m, tea.Batch(fetchRepoDetailsCmd(m.launchSeq, m.table.Cursor(), repo), toastCmd)
 				}
 			}
 		case "tab":
@@ -421,6 +821,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.state == stateHome {
+			return m, m.updateHome(msg)
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -430,17 +834,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case progressTickMsg:
+		if msg.seq != 0 && msg.seq != m.launchSeq {
+			return m, nil
+		}
 		if m.state == stateLoading {
 			m.loading.percent = msg.percent
 			m.loading.message = msg.message
 			cmds = append(cmds, m.loading.progress.SetPercent(msg.percent))
 			if msg.percent < 0.80 {
-				cmds = append(cmds, tickProgress(msg.percent+0.25, "Parsing metrics & generating views...", 300*time.Millisecond))
+				cmds = append(cmds, tickProgressWithSeq(m.launchSeq, msg.percent+0.25, "Parsing metrics & generating views...", 300*time.Millisecond))
 			}
 			return m, tea.Batch(cmds...)
 		}
 
 	case reposLoadedMsg:
+		if (msg.launchSeq != 0 && msg.launchSeq != m.launchSeq) ||
+			(msg.targetID != "" && msg.targetID != m.activeTargetID) ||
+			(msg.launchSeq == 0 && m.state == stateHome) {
+			return m, nil
+		}
+
+		if msg.isBackgroundRefresh {
+			m.refreshingStale = false
+			if msg.err != nil || len(msg.repos) == 0 || m.state != stateDashboard {
+				return m, nil
+			}
+			debounceCmd := m.applyRefreshedRepos(msg.repos)
+			toastCmd := m.setTransientToast("✓ Refreshed live data", 2*time.Second)
+			if debounceCmd != nil {
+				return m, tea.Batch(debounceCmd, toastCmd)
+			}
+			return m, toastCmd
+		}
+
+		m.refreshingStale = false
 		if msg.err != nil {
 			m.state = stateError
 			m.err = msg.err
@@ -457,6 +884,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			limit = m.cfg.Limit
 		}
 
+		m.userProfile = nil
 		if len(msg.repos) > 0 && msg.repos[0].UserProfile != nil {
 			m.userProfile = msg.repos[0].UserProfile
 			m.userProfile.RefreshAvatars(28, 14)
@@ -488,6 +916,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.active = tableActive
 		m.recalculateLayout(m.width, m.height)
 		m.state = stateDashboard
+
+		var postCmds []tea.Cmd
+		histEntry := msg.historyEntry
+		if histEntry == nil {
+			histEntry = m.pendingHistoryEntry
+		}
+		m.pendingHistoryEntry = nil
+		if histEntry != nil && m.launchOpts.HistoryStore != nil {
+			entryCopy := *histEntry
+			if entryCopy.Type == cache.HistoryTypeUser && m.userProfile != nil && strings.TrimSpace(m.userProfile.Name) != "" {
+				entryCopy.Subtitle = strings.TrimSpace(m.userProfile.Name)
+			}
+			m.historyReqSeq++
+			postCmds = append(postCmds, recordHistoryCmd(m.launchOpts.HistoryStore, entryCopy, m.historyReqSeq))
+		}
+		if msg.stale && msg.refreshFn != nil {
+			m.refreshingStale = true
+			postCmds = append(postCmds, refreshStaleCmd(m.launchSeq, msg.targetID, msg.refreshFn))
+		}
+		if len(postCmds) > 0 {
+			return m, tea.Batch(postCmds...)
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -505,18 +955,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case debounceCursorMsg:
-		if m.cursorDebouncer.Matches(msg.id) && msg.cursor == m.table.Cursor() {
+		if m.state == stateDashboard && m.cursorDebouncer.Matches(msg.id) && msg.cursor == m.table.Cursor() {
 			repos := m.activeRepoList()
 			if msg.cursor >= 0 && msg.cursor < len(repos) {
 				r := repos[msg.cursor]
 				if !r.DetailsLoaded {
-					return m, fetchRepoDetailsCmd(msg.cursor, r)
+					return m, fetchRepoDetailsCmd(m.launchSeq, msg.cursor, r)
 				}
 			}
 		}
 		return m, nil
 
 	case repoDetailsLoadedMsg:
+		if m.state != stateDashboard || (msg.launchSeq != 0 && msg.launchSeq != m.launchSeq) {
+			return m, nil
+		}
 		for i := range m.repoList {
 			if m.repoList[i].Owner == msg.owner && m.repoList[i].Name == msg.name {
 				m.repoList[i] = msg.repo
@@ -536,15 +989,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFileList()
 			m.updateReadmeContent()
 			if msg.err != nil {
-				m.toastID++
-				id := m.toastID
-				m.toastMessage = "⚠ Failed to load details (press 'r' to retry)"
-				return m, clearToastCmd(id, 3*time.Second)
+				return m, m.setTransientToast("⚠ Failed to load details (press 'r' to retry)", 3*time.Second)
 			}
 		}
 		return m, nil
 
 	case nextPageLoadedMsg:
+		if m.state != stateDashboard || (msg.launchSeq != 0 && msg.launchSeq != m.launchSeq) {
+			return m, nil
+		}
 		m.loadingNextPage = false
 		if msg.err == nil && len(msg.repos) > 0 {
 			m.currentPage = msg.page
@@ -570,22 +1023,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.hasMorePages = false
 			}
 
-			query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
-			if query == "" {
-				m.filteredRepos = m.repoList
-			} else {
-				matched := []Repo{}
-				for _, r := range m.repoList {
-					nameMatch := strings.Contains(strings.ToLower(r.Name), query)
-					ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
-					langMatch := strings.Contains(strings.ToLower(r.Language), query)
-					descMatch := strings.Contains(strings.ToLower(r.Description), query)
-					if nameMatch || ownerMatch || langMatch || descMatch {
-						matched = append(matched, r)
-					}
-				}
-				m.filteredRepos = matched
-			}
+			m.filteredRepos = filterReposByQuery(m.repoList, m.filterInput.Value())
 
 			limit := len(m.filteredRepos)
 			if m.cfg != nil && m.cfg.Limit > 0 && m.cfg.Limit < limit {
@@ -597,6 +1035,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hasMorePages = false
 		}
 		return m, nil
+	}
+
+	if m.state == stateHome && m.home.isInputActive() {
+		var inCmd tea.Cmd
+		m.home.input, inCmd = m.home.input.Update(msg)
+		return m, inCmd
 	}
 
 	if m.state != stateDashboard {
@@ -654,7 +1098,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.userProfile != nil && m.hasMorePages && !m.loadingNextPage && m.cfg != nil && m.cfg.User != "" {
 				if newCursor >= len(repos)-4 {
 					m.loadingNextPage = true
-					cmds = append(cmds, fetchNextPageCmd(m.cfg.User, m.cfg.Language, m.currentPage+1))
+					cmds = append(cmds, fetchNextPageCmd(m.launchSeq, m.cfg.User, m.cfg.Language, m.currentPage+1))
 				}
 			}
 		}
@@ -811,6 +1255,8 @@ func (m Model) View() string {
 	}
 
 	switch m.state {
+	case stateHome:
+		return m.renderHomeView(width, height)
 	case stateLoading:
 		return m.renderLoadingView(width, height)
 	case stateError:
@@ -1018,7 +1464,14 @@ func (m Model) renderStatusBar(width int) string {
 	}
 
 	var freqPill string
-	if m.cfg != nil && m.cfg.User == "" {
+	if m.cfg != nil && m.cfg.DirectRepo != "" {
+		freqPill = lipgloss.NewStyle().
+			Foreground(m.theme.Primary).
+			Background(m.theme.Surface).
+			Bold(true).
+			Padding(0, 1).
+			Render("📦 " + TruncateDisplayWidth(m.cfg.DirectRepo, 28, "…"))
+	} else if m.cfg != nil && m.cfg.User == "" {
 		freqPill = lipgloss.NewStyle().
 			Foreground(m.theme.Primary).
 			Background(m.theme.Surface).
@@ -1045,6 +1498,13 @@ func (m Model) renderStatusBar(width int) string {
 			Bold(true).
 			Padding(0, 1).
 			Render("⏳ Loading more...")
+	} else if m.refreshingStale {
+		loadingPill = lipgloss.NewStyle().
+			Foreground(m.theme.Primary).
+			Background(m.theme.Surface).
+			Bold(true).
+			Padding(0, 1).
+			Render("↻ Refreshing...")
 	}
 
 	var rateLimitPill string
@@ -1107,6 +1567,7 @@ func (m Model) renderStatusBar(width int) string {
 			kb("1-3", "focus"),
 			kb("/", "filter"),
 			kb("o", "open"),
+			kb("H", "home"),
 			kb("y", "copy"),
 			kb("t", "theme"),
 			kb("?", "help"),
@@ -1117,7 +1578,7 @@ func (m Model) renderStatusBar(width int) string {
 			kb("Tab", "cycle"),
 			kb("1-3", "focus"),
 			kb("/", "filter"),
-			kb("o", "open"),
+			kb("H", "home"),
 			kb("t", "theme"),
 			kb("?", "help"),
 			kb("q", "quit"),
@@ -1264,7 +1725,7 @@ func (m Model) renderThemeSelectorModal(width, height int) string {
 
 func (m Model) renderHelpModal(width, height int) string {
 	padV := 1
-	if height < 22 {
+	if height < 26 {
 		padV = 0
 	}
 	modalBorder := lipgloss.NewStyle().
@@ -1298,13 +1759,44 @@ func (m Model) renderHelpModal(width, height int) string {
 	var sections []string
 	sections = append(sections, title)
 
-	if height >= 24 {
+	if m.state == stateHome {
+		if height >= 22 {
+			sections = append(sections,
+				"",
+				sectionStyle.Render("HOME NAVIGATION"),
+				formatRow("Tab / Shift+Tab", "Switch Hub ⇄ History"),
+				formatRow("1 / 2", "Focus Hub / Recent History"),
+				formatRow("↑/↓, k/j", "Move selection"),
+				formatRow("Enter", "Launch item or open history"),
+				"",
+				sectionStyle.Render("HOME ACTIONS"),
+				formatRow("←/→ / Space", "Cycle Trending range"),
+				formatRow("l / u / g", "Lang filter / @user / owner/repo"),
+				formatRow("d / x", "Delete selected history entry"),
+				formatRow("D / Ctrl+X", "Clear all history"),
+				"",
+				sectionStyle.Render("SYSTEM"),
+				formatRow("t / ? / h", "Theme selector / Toggle help"),
+				formatRow("q / Ctrl+C", "Quit application"),
+			)
+		} else {
+			sections = append(sections,
+				formatRow("Tab / 1-2", "Switch Hub / History"),
+				formatRow("↑/↓ / Enter", "Navigate / Launch"),
+				formatRow("←/→ / l", "Range / Language"),
+				formatRow("u / g", "@user / owner/repo"),
+				formatRow("d / D", "Delete / Clear history"),
+				formatRow("t / ? / q", "Theme / Help / Quit"),
+			)
+		}
+	} else if height >= 26 {
 		sections = append(sections,
 			"",
 			sectionStyle.Render("NAVIGATION"),
 			formatRow("Tab / Shift+Tab", "Cycle focus between panes"),
 			formatRow("1, 2, 3", "Jump to Table, Files, Readme"),
 			formatRow("↑/↓, k/j", "Navigate rows or scroll"),
+			formatRow("H / ~", "Return to Home Launcher"),
 			"",
 			sectionStyle.Render("TRENDING & ACTIONS"),
 			formatRow("/", "Interactive in-place filter"),
@@ -1323,11 +1815,11 @@ func (m Model) renderHelpModal(width, height int) string {
 		sections = append(sections,
 			formatRow("Tab / 1-3", "Cycle or jump panes"),
 			formatRow("↑/↓ / k/j", "Navigate items"),
+			formatRow("H / ~", "Home Launcher"),
 			formatRow("/", "Fuzzy search filter"),
 			formatRow("d / f", "Cycle Daily/Weekly/Monthly"),
 			formatRow("o / y", "Open browser / Copy URL"),
-			formatRow("a", "Toggle avatar"),
-			formatRow("t", "Theme selector"),
+			formatRow("a / t", "Avatar / Theme selector"),
 			formatRow("? / Esc", "Close help / Clear filter"),
 			formatRow("q", "Quit"),
 		)
@@ -1343,11 +1835,21 @@ func (m Model) renderHelpModal(width, height int) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
 }
 
-func RenderWithLoading(cfg *flags.CmdConfig, fetcher func() ([]Repo, error)) (tea.Model, error) {
-	loading := newLoadingModel()
+// RenderWithOptions starts the TUI using explicit launch options and history callbacks.
+func RenderWithOptions(opts LaunchOptions) (tea.Model, error) {
+	cfg := &flags.CmdConfig{
+		IsCache:  true,
+		Limit:    2202,
+		Since:    flags.Daily,
+		Language: "All",
+	}
+	if opts.Config != nil {
+		copied := *opts.Config
+		cfg = &copied
+	}
 
 	themeName := "catppuccin"
-	if cfg != nil && cfg.Theme != "" {
+	if cfg.Theme != "" {
 		themeName = cfg.Theme
 	} else {
 		appCfg := appconfig.LoadConfig()
@@ -1358,17 +1860,53 @@ func RenderWithLoading(cfg *flags.CmdConfig, fetcher func() ([]Repo, error)) (te
 	th := theme.GetTheme(themeName)
 
 	m := Model{
-		state:   stateLoading,
-		loading: loading,
-		fetcher: fetcher,
-		cfg:     cfg,
-		theme:   th,
-		width:   80,
-		height:  24,
+		loading:       newLoadingModelWithTheme(th),
+		fetcher:       opts.InitialFetcher,
+		cfg:           cfg,
+		theme:         th,
+		width:         80,
+		height:        24,
+		launchOpts:    opts,
+		home:          newHomeModel(cfg),
+		launchSeq:     1,
+		historyReqSeq: 1,
+	}
+
+	switch {
+	case cfg.LaunchHome:
+		m.state = stateHome
+	case cfg.DirectRepo != "":
+		owner, repo, ok := cache.ParseRepoSlug(cfg.DirectRepo)
+		if !ok {
+			badRepo := cfg.DirectRepo
+			seq := m.launchSeq
+			m.state = stateError
+			m.err = fmt.Errorf("invalid repository %q (expected owner/repo)", badRepo)
+			m.lastLaunchCmd = func() tea.Cmd {
+				return func() tea.Msg {
+					return reposLoadedMsg{launchSeq: seq, err: fmt.Errorf("invalid repository %q (expected owner/repo)", badRepo)}
+				}
+			}
+		} else {
+			_ = m.launchDirectRepo(owner, repo)
+		}
+	case opts.InitialFetcher != nil:
+		m.state = stateLoading
+	case cfg.User != "":
+		_ = m.launchUser(cfg.User, cfg.Language)
+	default:
+		_ = m.launchTrending(cfg.Since, cfg.Language)
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	return p.Run()
+}
+
+func RenderWithLoading(cfg *flags.CmdConfig, fetcher func() ([]Repo, error)) (tea.Model, error) {
+	return RenderWithOptions(LaunchOptions{
+		Config:         cfg,
+		InitialFetcher: fetcher,
+	})
 }
 
 func Render(cfg *flags.CmdConfig, repos []Repo) (tea.Model, error) {
