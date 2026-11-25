@@ -55,8 +55,8 @@ func TestModel_FilterWorkflow(t *testing.T) {
 	}
 	m.recalculateLayout(120, 24)
 
-	// 1. Press '/' to activate filtering
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	// 1. Press 'F' to activate filtering
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
 	m = newM.(Model)
 	if !m.filtering {
 		t.Errorf("expected m.filtering to be true after pressing '/'")
@@ -104,7 +104,7 @@ func TestModel_FilterWorkflow(t *testing.T) {
 	}
 
 	// 4b. Zero-match filter must NOT fall back to unfiltered repoList
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
 	m = newM.(Model)
 	for _, r := range "zzzznomatch" {
 		newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -116,8 +116,8 @@ func TestModel_FilterWorkflow(t *testing.T) {
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	m = newM.(Model)
 
-	// 5. Press '/' then 'esc' to cancel filter while typing
-	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	// 5. Press 'F' then 'esc' to cancel filter while typing
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
 	m = newM.(Model)
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	m = newM.(Model)
