@@ -278,6 +278,16 @@ func TestAuthResolver_ConcurrentDeduplication(t *testing.T) {
 			results[idx] = resolver.Resolve(func(string) string { return "" }, cliFn)
 		}(i)
 	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resolver.mu.Lock()
+		w := resolver.waiters
+		resolver.mu.Unlock()
+		if w >= workers-1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(release)
 	wg.Wait()
 

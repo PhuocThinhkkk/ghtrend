@@ -231,6 +231,7 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 		FullName string `json:"full_name"`
 	}
 
+	var hdrMu sync.Mutex
 	var seenAuth string
 	var seenUA string
 	var seenAccept string
@@ -238,11 +239,13 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 	var seenContentType string
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hdrMu.Lock()
 		seenAuth = r.Header.Get("Authorization")
 		seenUA = r.Header.Get("User-Agent")
 		seenAccept = r.Header.Get("Accept")
 		seenAPIVer = r.Header.Get("X-GitHub-Api-Version")
 		seenContentType = r.Header.Get("Content-Type")
+		hdrMu.Unlock()
 
 		switch r.URL.Path {
 		case "/repos/octocat/hello":
@@ -260,9 +263,12 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 	}))
 	defer apiServer.Close()
 
+	var thirdPartyMu sync.Mutex
 	var thirdPartyAuth string
 	thirdPartyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		thirdPartyMu.Lock()
 		thirdPartyAuth = r.Header.Get("Authorization")
+		thirdPartyMu.Unlock()
 		_, _ = w.Write([]byte(`{"full_name":"external"}`))
 	}))
 	defer thirdPartyServer.Close()
@@ -280,17 +286,20 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 	if out.FullName != "octocat/hello" {
 		t.Errorf("FullName = %q, want octocat/hello", out.FullName)
 	}
-	if seenAuth != "Bearer secret_token_123" {
-		t.Errorf("Authorization = %q, want Bearer secret_token_123", seenAuth)
+	hdrMu.Lock()
+	gotAuth, gotUA, gotAccept, gotAPIVer := seenAuth, seenUA, seenAccept, seenAPIVer
+	hdrMu.Unlock()
+	if gotAuth != "Bearer secret_token_123" {
+		t.Errorf("Authorization = %q, want Bearer secret_token_123", gotAuth)
 	}
-	if seenUA != "ghtrend" {
-		t.Errorf("User-Agent = %q, want ghtrend", seenUA)
+	if gotUA != "ghtrend" {
+		t.Errorf("User-Agent = %q, want ghtrend", gotUA)
 	}
-	if seenAccept != "application/vnd.github+json" {
-		t.Errorf("Accept = %q, want application/vnd.github+json", seenAccept)
+	if gotAccept != "application/vnd.github+json" {
+		t.Errorf("Accept = %q, want application/vnd.github+json", gotAccept)
 	}
-	if seenAPIVer != "2022-11-28" {
-		t.Errorf("X-GitHub-Api-Version = %q, want 2022-11-28", seenAPIVer)
+	if gotAPIVer != "2022-11-28" {
+		t.Errorf("X-GitHub-Api-Version = %q, want 2022-11-28", gotAPIVer)
 	}
 
 	// 2. Custom Accept + *string target.
@@ -298,8 +307,11 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 	if _, err := client.DoREST(context.Background(), http.MethodGet, "repos/octocat/hello/readme", nil, "application/vnd.github.raw+json", &readme); err != nil {
 		t.Fatalf("DoREST raw string failed: %v", err)
 	}
-	if readme != "# Hello README" || seenAccept != "application/vnd.github.raw+json" {
-		t.Errorf("readme=%q accept=%q", readme, seenAccept)
+	hdrMu.Lock()
+	gotAccept = seenAccept
+	hdrMu.Unlock()
+	if readme != "# Hello README" || gotAccept != "application/vnd.github.raw+json" {
+		t.Errorf("readme=%q accept=%q", readme, gotAccept)
 	}
 
 	// 3. Query string containing http:// still treated as relative path.
@@ -315,8 +327,11 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 	if _, err := client.DoREST(context.Background(), http.MethodPut, "/user/starred/octocat/hello", map[string]string{"note": "star"}, "", nil); err != nil {
 		t.Fatalf("DoREST PUT 204 failed: %v", err)
 	}
-	if seenContentType != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", seenContentType)
+	hdrMu.Lock()
+	gotCT := seenContentType
+	hdrMu.Unlock()
+	if gotCT != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotCT)
 	}
 
 	// 5. Third-party full URL must NOT receive Authorization header.
@@ -324,8 +339,11 @@ func TestClient_DoREST_HeadersDecodingAndHostGuard(t *testing.T) {
 	if _, err := client.DoREST(context.Background(), http.MethodGet, thirdPartyServer.URL+"/data", nil, "", &extOut); err != nil {
 		t.Fatalf("DoREST third-party failed: %v", err)
 	}
-	if thirdPartyAuth != "" {
-		t.Fatalf("expected NO Authorization header on third-party host, got %q", thirdPartyAuth)
+	thirdPartyMu.Lock()
+	gotThirdAuth := thirdPartyAuth
+	thirdPartyMu.Unlock()
+	if gotThirdAuth != "" {
+		t.Fatalf("expected NO Authorization header on third-party host, got %q", gotThirdAuth)
 	}
 }
 
@@ -613,21 +631,26 @@ func TestClient_DoGraphQL(t *testing.T) {
 
 	t.Run("success unwraps data and PageInfo", func(t *testing.T) {
 		SetRateLimitInfo(RateLimitInfo{})
+		var gqlMu sync.Mutex
 		var gotQuery string
 		var gotLoginVar string
 		var gotAuth string
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotAuth = r.Header.Get("Authorization")
 			var reqBody struct {
 				Query     string         `json:"query"`
 				Variables map[string]any `json:"variables"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&reqBody)
+			loginVal, _ := reqBody.Variables["login"].(string)
+
+			gqlMu.Lock()
+			gotAuth = r.Header.Get("Authorization")
 			gotQuery = reqBody.Query
-			if v, ok := reqBody.Variables["login"].(string); ok {
-				gotLoginVar = v
+			if loginVal != "" {
+				gotLoginVar = loginVal
 			}
+			gqlMu.Unlock()
 
 			w.Header().Set("X-Ratelimit-Resource", "graphql")
 			w.Header().Set("X-Ratelimit-Limit", "5000")
@@ -668,11 +691,14 @@ func TestClient_DoGraphQL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DoGraphQL failed: %v", err)
 		}
-		if gotAuth != "Bearer gql_tok" {
-			t.Errorf("Authorization = %q, want Bearer gql_tok", gotAuth)
+		gqlMu.Lock()
+		authSnap, querySnap, loginSnap := gotAuth, gotQuery, gotLoginVar
+		gqlMu.Unlock()
+		if authSnap != "Bearer gql_tok" {
+			t.Errorf("Authorization = %q, want Bearer gql_tok", authSnap)
 		}
-		if gotLoginVar != "octocat" || !strings.Contains(gotQuery, "repositories") {
-			t.Errorf("unexpected payload query=%q login=%q", gotQuery, gotLoginVar)
+		if loginSnap != "octocat" || !strings.Contains(querySnap, "repositories") {
+			t.Errorf("unexpected payload query=%q login=%q", querySnap, loginSnap)
 		}
 		if !out.User.Repositories.PageInfo.HasNextPage || out.User.Repositories.PageInfo.EndCursor != "cursor_abc" {
 			t.Errorf("unexpected PageInfo: %+v", out.User.Repositories.PageInfo)
@@ -817,22 +843,34 @@ func TestClient_DoREST_CachedLinkHeaderAndRedirectAuthStrip(t *testing.T) {
 	t.Cleanup(func() { SetRateLimitInfo(RateLimitInfo{}) })
 	SetRateLimitInfo(RateLimitInfo{})
 
-	var extAuth atomic.Value
+	var obsMu sync.Mutex
+	var extObserved bool
+	var extAuth string
 	extSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		extAuth.Store(r.Header.Get("Authorization"))
+		obsMu.Lock()
+		extObserved = true
+		extAuth = r.Header.Get("Authorization")
+		obsMu.Unlock()
 		_, _ = w.Write([]byte(`{"redirected":true}`))
 	}))
 	defer extSrv.Close()
 
 	var hits atomic.Int32
+	var redirectStartAuth string
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/o/r/issues":
 			hits.Add(1)
-			w.Header().Set("Link", `<https://api.github.com/repos/o/r/issues?page=2>; rel="next"`)
+			w.Header().Add("Link", `<https://api.github.com/repos/o/r/issues?page=1>; rel="prev"`)
+			w.Header().Add("Link", `<https://api.github.com/repos/o/r/issues?page=2>; rel="next"`)
 			_, _ = w.Write([]byte(`[{"number":1}]`))
 		case "/redirect":
+			obsMu.Lock()
+			redirectStartAuth = r.Header.Get("Authorization")
+			obsMu.Unlock()
 			http.Redirect(w, r, extSrv.URL+"/target", http.StatusFound)
+		case "/same-origin-redirect":
+			http.Redirect(w, r, "/repos/o/r/issues?page=1", http.StatusFound)
 		default:
 			http.NotFound(w, r)
 		}
@@ -842,12 +880,9 @@ func TestClient_DoREST_CachedLinkHeaderAndRedirectAuthStrip(t *testing.T) {
 	c := NewClient()
 	c.APIBaseURL = apiSrv.URL
 	c.TokenFunc = func() string { return "secret_tok" }
-	c.HTTPClient = &http.Client{
-		Timeout:       5 * time.Second,
-		CheckRedirect: AuthSafeRedirectPolicy(apiSrv.URL),
-	}
+	c.HTTPClient = &http.Client{Timeout: 5 * time.Second}
 
-	// 1. Link header must be preserved across cache hit.
+	// 1. Multi-Link headers must be preserved across cache hit.
 	_, hdr1, err := c.DoRESTRaw(context.Background(), http.MethodGet, "/repos/o/r/issues?page=1", nil, "")
 	if err != nil {
 		t.Fatalf("first GET failed: %v", err)
@@ -859,11 +894,11 @@ func TestClient_DoREST_CachedLinkHeaderAndRedirectAuthStrip(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Fatalf("expected 1 network hit, got %d", hits.Load())
 	}
-	if got := ParseNextPageURL(hdr1.Get("Link")); got != "https://api.github.com/repos/o/r/issues?page=2" {
-		t.Fatalf("hdr1 Link = %q", got)
+	if got := NextPageURL(hdr1, apiSrv.URL); got != "https://api.github.com/repos/o/r/issues?page=2" {
+		t.Fatalf("hdr1 NextPageURL = %q", got)
 	}
-	if got := ParseNextPageURL(hdr2.Get("Link")); got != "https://api.github.com/repos/o/r/issues?page=2" {
-		t.Fatalf("cached hdr2 Link = %q, want preserved next URL", got)
+	if got := NextPageURL(hdr2, apiSrv.URL); got != "https://api.github.com/repos/o/r/issues?page=2" {
+		t.Fatalf("cached hdr2 NextPageURL = %q, want preserved next URL", got)
 	}
 
 	// 2. Typed-nil pointers return error rather than panicking.
@@ -872,13 +907,84 @@ func TestClient_DoREST_CachedLinkHeaderAndRedirectAuthStrip(t *testing.T) {
 		t.Fatal("expected error for typed-nil *[]byte target")
 	}
 
-	// 3. Redirect to untrusted server must strip Authorization header.
+	// 3. Cross-host redirect starts with Authorization and strips it at untrusted destination.
 	var out map[string]any
 	if _, err := c.DoREST(context.Background(), http.MethodGet, "/redirect", nil, "", &out); err != nil {
 		t.Fatalf("redirect request failed: %v", err)
 	}
-	if v, _ := extAuth.Load().(string); v != "" {
-		t.Fatalf("expected Authorization stripped on cross-host redirect, got %q", v)
+	obsMu.Lock()
+	startAuthSnap, extObsSnap, extAuthSnap := redirectStartAuth, extObserved, extAuth
+	obsMu.Unlock()
+	if startAuthSnap != "Bearer secret_tok" {
+		t.Fatalf("expected /redirect to receive initial Bearer secret_tok, got %q", startAuthSnap)
+	}
+	if !extObsSnap || extAuthSnap != "" {
+		t.Fatalf("expected external destination observed=%v with empty Authorization=%q", extObsSnap, extAuthSnap)
+	}
+}
+
+func TestClient_DoREST_CredentialAndCanonicalIsolation(t *testing.T) {
+	t.Cleanup(func() { SetRateLimitInfo(RateLimitInfo{}) })
+	SetRateLimitInfo(RateLimitInfo{})
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		_, _ = fmt.Fprintf(w, `{"hit":%d,"auth":%q}`, n, r.Header.Get("Authorization"))
+	}))
+	defer srv.Close()
+
+	tok := "token_alpha"
+	var tokMu sync.Mutex
+	c := NewClient()
+	c.APIBaseURL = srv.URL
+	c.HTTPClient = srv.Client()
+	c.TokenFunc = func() string {
+		tokMu.Lock()
+		defer tokMu.Unlock()
+		return tok
+	}
+
+	// 1. Credential change misses old credential cache entry.
+	b1, _, err := c.DoRESTRaw(context.Background(), http.MethodGet, "/repos/o/r/issues/42", nil, "")
+	if err != nil {
+		t.Fatalf("GET token_alpha failed: %v", err)
+	}
+	tokMu.Lock()
+	tok = "token_beta"
+	tokMu.Unlock()
+	b2, _, err := c.DoRESTRaw(context.Background(), http.MethodGet, "/repos/o/r/issues/42", nil, "")
+	if err != nil {
+		t.Fatalf("GET token_beta failed: %v", err)
+	}
+	if string(b1) == string(b2) || hits.Load() != 2 {
+		t.Fatalf("expected distinct cache keys for different credentials; hits=%d b1=%s b2=%s", hits.Load(), b1, b2)
+	}
+
+	// 2. Canonical URL matching: %34%32 hits same cache & gets invalidated by PATCH /42.
+	_, _, err = c.DoRESTRaw(context.Background(), http.MethodGet, "/repos/o/r/issues/%34%32", nil, "")
+	if err != nil {
+		t.Fatalf("GET %%34%%32 failed: %v", err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("expected canonical cache hit for %%34%%32; hits=%d", hits.Load())
+	}
+	if _, _, err := c.DoRESTRaw(context.Background(), http.MethodPatch, "/repos/o/r/issues/42", map[string]string{"state": "closed"}, ""); err != nil {
+		t.Fatalf("PATCH /42 failed: %v", err)
+	}
+	if _, _, err := c.DoRESTRaw(context.Background(), http.MethodGet, "/repos/o/r/issues/%34%32", nil, ""); err != nil {
+		t.Fatalf("GET %%34%%32 after PATCH failed: %v", err)
+	}
+	if hits.Load() != 4 {
+		t.Fatalf("expected PATCH /42 to invalidate %%34%%32 cache; hits=%d", hits.Load())
+	}
+
+	// 3. Relative next link resolution.
+	if got := ParseNextPageURLWithBase(`<?page=3>; rel="next"`, srv.URL+"/repos/o/r/issues?page=2"); got != srv.URL+"/repos/o/r/issues?page=3" {
+		t.Fatalf("ParseNextPageURLWithBase relative = %q", got)
+	}
+	if !HasNextPage(`<?page=2>; rel="next"`) {
+		t.Fatal("expected HasNextPage to accept valid relative link reference")
 	}
 }
 
@@ -912,32 +1018,58 @@ func TestClient_DoREST_SecondaryRateLimitCooldown(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Fatalf("expected cooldown to prevent second network hit; hits=%d", hits.Load())
 	}
+
+	// Isolated client with a different credential must not be blocked by c's cooldown.
+	c2 := NewClient()
+	c2.APIBaseURL = srv.URL
+	c2.HTTPClient = srv.Client()
+	c2.TokenFunc = func() string { return "other_user_tok" }
+	_, _, _ = c2.DoRESTRaw(context.Background(), http.MethodGet, "/repos/o/r", nil, "")
+	if hits.Load() != 2 {
+		t.Fatalf("expected isolated credential client to hit server; hits=%d", hits.Load())
+	}
 }
 
 func TestSetDefaultCache_ConcurrentWithRequests(t *testing.T) {
-	orig := DefaultClient.activeCache()
-	t.Cleanup(func() { SetDefaultCache(orig) })
+	t.Cleanup(func() { SetRateLimitInfo(RateLimitInfo{}) })
+	SetRateLimitInfo(RateLimitInfo{})
+
+	origCache := DefaultClient.activeCache()
+	origURL := DefaultClient.APIBaseURL
+	origToken := DefaultClient.TokenFunc
+	t.Cleanup(func() {
+		SetDefaultCache(origCache)
+		DefaultClient.APIBaseURL = origURL
+		DefaultClient.TokenFunc = origToken
+	})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
 
-	origURL := DefaultClient.APIBaseURL
 	DefaultClient.APIBaseURL = srv.URL
-	t.Cleanup(func() { DefaultClient.APIBaseURL = origURL })
+	DefaultClient.TokenFunc = func() string { return "" }
 
+	const workers = 8
+	errs := make([]error, workers)
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			if idx%2 == 0 {
 				SetDefaultCache(newMemCache())
 			} else {
-				_, _, _ = DefaultClient.DoRESTRaw(context.Background(), http.MethodGet, "/ping", nil, "")
+				_, _, errs[idx] = DefaultClient.DoRESTRaw(context.Background(), http.MethodGet, "/ping", nil, "")
 			}
 		}(i)
 	}
 	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("worker %d failed: %v", i, err)
+		}
+	}
 }

@@ -29,6 +29,7 @@ type AuthResolver struct {
 	failCooldown time.Duration
 	now          func() time.Time
 	inflight     chan struct{}
+	waiters      int
 }
 
 // NewAuthResolver creates an AuthResolver with a 30-second CLI failure cooldown.
@@ -108,8 +109,12 @@ func (r *AuthResolver) Resolve(
 		}
 		if r.inflight != nil {
 			ch := r.inflight
+			r.waiters++
 			r.mu.Unlock()
 			<-ch
+			r.mu.Lock()
+			r.waiters--
+			r.mu.Unlock()
 			continue
 		}
 

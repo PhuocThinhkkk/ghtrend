@@ -355,6 +355,24 @@ func TestCheckRateLimit_Cooldown(t *testing.T) {
 	}
 }
 
+func TestCheckRateLimit_UnknownResetAllowsProbeAfterDeadline(t *testing.T) {
+	t.Cleanup(func() { SetRateLimitInfo(RateLimitInfo{}) })
+	SetRateLimitInfo(RateLimitInfo{})
+
+	UpdateRateLimitFromHeaders(makeRateHeaders("core", "60", "0", ""))
+	if err := CheckRateLimit("core"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected immediate block when unknown-reset probe deadline has not elapsed, got %v", err)
+	}
+
+	rateLimitMu.Lock()
+	resourceBuckets["core"].unknownProbeEnd = time.Now().Add(-time.Second)
+	rateLimitMu.Unlock()
+
+	if err := CheckRateLimit("core"); err != nil {
+		t.Fatalf("expected probe to be allowed once unknown-reset deadline elapsed, got %v", err)
+	}
+}
+
 func makeRateHeaders(resource, limit, remaining, reset string) http.Header {
 	h := http.Header{}
 	if resource != "" {

@@ -3,6 +3,8 @@ package ghclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -366,8 +368,10 @@ type Client struct {
 	Cache           ResponseCache
 	DefaultCacheTTL time.Duration
 
-	cacheMu sync.RWMutex
-	accepts *acceptSet
+	cacheMu    sync.RWMutex
+	writeEpoch uint64
+	accepts    *acceptSet
+	creds      *acceptSet
 }
 
 // NewClient creates a Client configured with default GitHub endpoints, token discovery,
@@ -377,11 +381,12 @@ func NewClient() *Client {
 		APIBaseURL:      defaultAPIBaseURL,
 		GraphQLURL:      defaultGraphQLURL,
 		WebBaseURL:      defaultWebBaseURL,
-		HTTPClient:      &http.Client{Timeout: defaultHTTPTimeout, CheckRedirect: AuthSafeRedirectPolicy()},
+		HTTPClient:      &http.Client{Timeout: defaultHTTPTimeout},
 		TokenFunc:       ResolveAuthToken,
 		Cache:           newMemCache(),
 		DefaultCacheTTL: defaultCacheTTL,
 		accepts:         newAcceptSet(),
+		creds:           newAcceptSet(),
 	}
 }
 
@@ -415,28 +420,85 @@ func (c *Client) activeCache() ResponseCache {
 
 const cachedEnvelopeMagic = "\x00GHC1\x00"
 
-func encodeCachedResponse(body []byte, link string) []byte {
-	if link == "" && !bytes.HasPrefix(body, []byte(cachedEnvelopeMagic)) {
+func encodeCachedResponse(body []byte, linkValues []string) []byte {
+	cleanLinks := make([]string, 0, len(linkValues))
+	for _, v := range linkValues {
+		v = strings.ReplaceAll(strings.ReplaceAll(v, "\r", ""), "\n", "")
+		if strings.TrimSpace(v) != "" {
+			cleanLinks = append(cleanLinks, v)
+		}
+	}
+	joinedLinks := strings.Join(cleanLinks, "\n")
+	if joinedLinks == "" && !bytes.HasPrefix(body, []byte(cachedEnvelopeMagic)) {
 		return body
 	}
-	buf := make([]byte, 0, len(cachedEnvelopeMagic)+len(link)+1+len(body))
+	buf := make([]byte, 0, len(cachedEnvelopeMagic)+len(joinedLinks)+1+len(body))
 	buf = append(buf, cachedEnvelopeMagic...)
-	buf = append(buf, link...)
+	buf = append(buf, joinedLinks...)
 	buf = append(buf, 0)
 	buf = append(buf, body...)
 	return buf
 }
 
-func decodeCachedResponse(raw []byte) (body []byte, link string) {
+func decodeCachedResponse(raw []byte) (body []byte, linkValues []string) {
 	if !bytes.HasPrefix(raw, []byte(cachedEnvelopeMagic)) {
-		return raw, ""
+		return raw, nil
 	}
 	rest := raw[len(cachedEnvelopeMagic):]
 	sep := bytes.IndexByte(rest, 0)
 	if sep < 0 {
-		return raw, ""
+		return raw, nil
 	}
-	return rest[sep+1:], string(rest[:sep])
+	headerBlock := string(rest[:sep])
+	if headerBlock != "" {
+		linkValues = strings.Split(headerBlock, "\n")
+	}
+	return rest[sep+1:], linkValues
+}
+
+func tokenFingerprint(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "anon"
+	}
+	sum := sha256.Sum256([]byte(token))
+	return "t:" + hex.EncodeToString(sum[:8])
+}
+
+func (c *Client) rateLimitOwnerScope(credFP string) string {
+	return strings.ToLower(c.apiBaseURL()) + "|" + credFP
+}
+
+func (c *Client) currentWriteEpoch() uint64 {
+	c.cacheMu.RLock()
+	epoch := c.writeEpoch
+	c.cacheMu.RUnlock()
+	return epoch
+}
+
+func (c *Client) storeIfWriteEpochUnchanged(
+	startEpoch uint64,
+	cacheStore ResponseCache,
+	cacheKey string,
+	credFP string,
+	accept string,
+	encoded []byte,
+	ttl time.Duration,
+) {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	if c.writeEpoch != startEpoch {
+		return
+	}
+	if c.accepts == nil {
+		c.accepts = newAcceptSet()
+	}
+	if c.creds == nil {
+		c.creds = newAcceptSet()
+	}
+	c.accepts.add(accept)
+	c.creds.add(credFP)
+	cacheStore.SetBytes(cacheKey, encoded, ttl)
 }
 
 // DoRESTRaw executes a GitHub REST API request and returns the raw response body and headers.
@@ -469,21 +531,26 @@ func (c *Client) DoRESTRaw(
 		accept = defaultAcceptHeader
 	}
 
-	cacheKey := accept + "|" + resolvedURL
+	token := c.resolveToken()
+	credFP := tokenFingerprint(token)
+	ownerScope := c.rateLimitOwnerScope(credFP)
+	canonicalURL := canonicalCacheURL(parsedURL)
+	cacheKey := credFP + "|" + accept + "|" + canonicalURL
+
 	cacheStore := c.activeCache()
 	if method == http.MethodGet && cacheStore != nil {
 		if cached, ok := cacheStore.GetBytes(cacheKey); ok {
-			bodyBytes, link := decodeCachedResponse(cached)
+			bodyBytes, links := decodeCachedResponse(cached)
 			headers := http.Header{}
-			if link != "" {
-				headers.Set("Link", link)
+			for _, lv := range links {
+				headers.Add("Link", lv)
 			}
 			return bodyBytes, headers, nil
 		}
 	}
 
-	resource := c.rateLimitResource(parsedURL.Path)
-	if err := CheckRateLimit(resource); err != nil {
+	resource := c.rateLimitResource(ownerScope, parsedURL.Path)
+	if err := CheckRateLimitScoped(ownerScope, resource); err != nil {
 		return nil, nil, err
 	}
 
@@ -492,12 +559,17 @@ func (c *Client) DoRESTRaw(
 		return nil, nil, err
 	}
 
+	startEpoch := uint64(0)
+	if method == http.MethodGet {
+		startEpoch = c.currentWriteEpoch()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, method, resolvedURL, bodyReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating github rest request: %w", err)
 	}
 
-	c.applyCommonHeaders(req, resolvedURL, accept, isJSONBody)
+	c.applyCommonHeadersWithToken(req, resolvedURL, accept, isJSONBody, token)
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
@@ -505,28 +577,29 @@ func (c *Client) DoRESTRaw(
 	}
 	defer resp.Body.Close()
 
-	UpdateRateLimitFromHeaders(resp.Header)
+	UpdateRateLimitFromHeadersScoped(ownerScope, resp.Header, resource)
+
+	headers := resp.Header.Clone()
+	isSuccess := resp.StatusCode >= 200 && resp.StatusCode < 300
+	if isSuccess && isWriteMethod(method) {
+		c.invalidateWriteCache(cacheStore, parsedURL, credFP, accept)
+	}
 
 	respBody, err := readBoundedBody(resp.Body)
 	if err != nil {
-		return nil, resp.Header.Clone(), err
+		return nil, headers, err
 	}
 
-	headers := resp.Header.Clone()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if !isSuccess {
 		apiErr := parseAPIError(resp.StatusCode, resp.Header, respBody, resource)
-		recordAPIErrorCooldown(apiErr)
+		recordAPIErrorCooldownScoped(ownerScope, apiErr)
 		return nil, headers, apiErr
 	}
 
-	if cacheStore != nil {
-		if method == http.MethodGet {
-			if ttl := c.effectiveCacheTTL(); ttl > 0 {
-				c.accepts.add(accept)
-				cacheStore.SetBytes(cacheKey, encodeCachedResponse(respBody, resp.Header.Get("Link")), ttl)
-			}
-		} else if isWriteMethod(method) {
-			c.invalidateWriteCache(cacheStore, parsedURL, accept)
+	if cacheStore != nil && method == http.MethodGet {
+		if ttl := c.effectiveCacheTTL(); ttl > 0 {
+			encoded := encodeCachedResponse(respBody, resp.Header.Values("Link"))
+			c.storeIfWriteEpochUnchanged(startEpoch, cacheStore, cacheKey, credFP, accept, encoded, ttl)
 		}
 	}
 
@@ -587,6 +660,19 @@ func (c *Client) DoGraphQL(
 		return errors.New("graphql query cannot be empty")
 	}
 
+	gqlURL := c.graphQLURL()
+	parsedGQL, err := url.Parse(gqlURL)
+	if err != nil {
+		return fmt.Errorf("invalid graphql url %q: %w", gqlURL, err)
+	}
+	gqlScheme := strings.ToLower(parsedGQL.Scheme)
+	if (gqlScheme != "http" && gqlScheme != "https") || parsedGQL.Host == "" {
+		return fmt.Errorf("invalid graphql url %q", gqlURL)
+	}
+	if !IsGitHubAuthTarget(gqlURL, c.allowedAuthHosts()...) {
+		return fmt.Errorf("graphql target %q is not an authorized https or loopback endpoint", gqlURL)
+	}
+
 	token := c.resolveToken()
 	if token == "" {
 		return &APIError{
@@ -597,7 +683,8 @@ func (c *Client) DoGraphQL(
 		}
 	}
 
-	if err := CheckRateLimit("graphql"); err != nil {
+	ownerScope := c.rateLimitOwnerScope(tokenFingerprint(token))
+	if err := CheckRateLimitScoped(ownerScope, "graphql"); err != nil {
 		return err
 	}
 
@@ -614,22 +701,12 @@ func (c *Client) DoGraphQL(
 		return fmt.Errorf("encoding graphql payload: %w", err)
 	}
 
-	gqlURL := c.graphQLURL()
-	parsedGQL, err := url.Parse(gqlURL)
-	if err != nil {
-		return fmt.Errorf("invalid graphql url %q: %w", gqlURL, err)
-	}
-	gqlScheme := strings.ToLower(parsedGQL.Scheme)
-	if (gqlScheme != "http" && gqlScheme != "https") || parsedGQL.Host == "" {
-		return fmt.Errorf("invalid graphql url %q", gqlURL)
-	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gqlURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("creating github graphql request: %w", err)
 	}
 
-	c.applyCommonHeaders(req, gqlURL, defaultAcceptHeader, true)
+	c.applyCommonHeadersWithToken(req, gqlURL, defaultAcceptHeader, true, token)
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
@@ -637,7 +714,7 @@ func (c *Client) DoGraphQL(
 	}
 	defer resp.Body.Close()
 
-	UpdateRateLimitFromHeaders(resp.Header)
+	UpdateRateLimitFromHeadersScoped(ownerScope, resp.Header, "graphql")
 
 	respBody, err := readBoundedBody(resp.Body)
 	if err != nil {
@@ -646,7 +723,7 @@ func (c *Client) DoGraphQL(
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := parseAPIError(resp.StatusCode, resp.Header, respBody, "graphql")
-		recordAPIErrorCooldown(apiErr)
+		recordAPIErrorCooldownScoped(ownerScope, apiErr)
 		return apiErr
 	}
 
@@ -664,7 +741,7 @@ func (c *Client) DoGraphQL(
 	if len(envelope.Errors) > 0 {
 		gqlErr := buildGraphQLError(resp.StatusCode, resp.Header, envelope.Errors)
 		if apiErr, ok := gqlErr.(*APIError); ok {
-			recordAPIErrorCooldown(apiErr)
+			recordAPIErrorCooldownScoped(ownerScope, apiErr)
 		}
 		return gqlErr
 	}
@@ -751,10 +828,23 @@ func (c *Client) graphQLURL() string {
 }
 
 func (c *Client) httpClient() *http.Client {
-	if c.HTTPClient != nil {
-		return c.HTTPClient
+	base := c.HTTPClient
+	if base == nil {
+		base = fallbackAPIHTTPClient
 	}
-	return fallbackAPIHTTPClient
+	copied := *base
+	origCheck := base.CheckRedirect
+	authCheck := AuthSafeRedirectPolicy(c.allowedAuthHosts()...)
+	copied.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := authCheck(req, via); err != nil {
+			return err
+		}
+		if origCheck != nil {
+			return origCheck(req, via)
+		}
+		return nil
+	}
+	return &copied
 }
 
 func (c *Client) resolveToken() string {
@@ -820,7 +910,7 @@ func (c *Client) resolveRESTURL(pathOrURL string) (string, *url.URL, error) {
 	return resolved, parsed, nil
 }
 
-func (c *Client) rateLimitResource(reqPath string) string {
+func (c *Client) rateLimitResource(ownerScope, reqPath string) string {
 	cleanPath := reqPath
 	if baseParsed, err := url.Parse(c.apiBaseURL()); err == nil {
 		basePath := strings.TrimRight(baseParsed.Path, "/")
@@ -832,7 +922,7 @@ func (c *Client) rateLimitResource(reqPath string) string {
 	case cleanPath == "/graphql":
 		return "graphql"
 	case cleanPath == "/search/code" || strings.HasPrefix(cleanPath, "/search/code/"):
-		if info := GetRateLimitForResource("code_search"); info.HasData {
+		if HasActiveRateLimitState(ownerScope, "code_search") || HasActiveRateLimitState("", "code_search") {
 			return "code_search"
 		}
 		return "search"
@@ -843,7 +933,7 @@ func (c *Client) rateLimitResource(reqPath string) string {
 	}
 }
 
-func (c *Client) applyCommonHeaders(req *http.Request, targetURL, accept string, isJSONBody bool) {
+func (c *Client) applyCommonHeadersWithToken(req *http.Request, targetURL, accept string, isJSONBody bool, token string) {
 	req.Header.Set("User-Agent", defaultUserAgent)
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", defaultAPIVersion)
@@ -851,12 +941,16 @@ func (c *Client) applyCommonHeaders(req *http.Request, targetURL, accept string,
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if token := c.resolveToken(); token != "" && IsGitHubAuthTarget(targetURL, c.allowedAuthHosts()...) {
+	if token = strings.TrimSpace(token); token != "" && IsGitHubAuthTarget(targetURL, c.allowedAuthHosts()...) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 }
 
-func (c *Client) invalidateWriteCache(cacheStore ResponseCache, parsedURL *url.URL, currentAccept string) {
+func (c *Client) invalidateWriteCache(cacheStore ResponseCache, parsedURL *url.URL, currentCredFP, currentAccept string) {
+	c.cacheMu.Lock()
+	c.writeEpoch++
+	c.cacheMu.Unlock()
+
 	if cacheStore == nil || parsedURL == nil {
 		return
 	}
@@ -872,13 +966,35 @@ func (c *Client) invalidateWriteCache(cacheStore ResponseCache, parsedURL *url.U
 	}
 
 	acceptVariants := collectAcceptVariants(currentAccept, c.accepts.list())
-	for _, acc := range acceptVariants {
-		for _, urlPrefix := range prefixes {
-			cacheStore.InvalidatePrefix(acc + "|" + urlPrefix + "?")
-			cacheStore.InvalidatePrefix(acc + "|" + urlPrefix + "/")
-			cacheStore.Invalidate(acc + "|" + urlPrefix)
+	credVariants := collectUniqueVariants(currentCredFP, c.creds.list())
+	for _, cred := range credVariants {
+		for _, acc := range acceptVariants {
+			for _, urlPrefix := range prefixes {
+				prefix := cred + "|" + acc + "|" + urlPrefix
+				cacheStore.InvalidatePrefix(prefix + "?")
+				cacheStore.InvalidatePrefix(prefix + "/")
+				cacheStore.Invalidate(prefix)
+			}
 		}
 	}
+}
+
+func collectUniqueVariants(current string, seen []string) []string {
+	unique := make(map[string]struct{}, len(seen)+2)
+	unique["anon"] = struct{}{}
+	if current != "" {
+		unique[current] = struct{}{}
+	}
+	for _, s := range seen {
+		if s != "" {
+			unique[s] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(unique))
+	for v := range unique {
+		out = append(out, v)
+	}
+	return out
 }
 
 func collectAcceptVariants(currentAccept string, seen []string) []string {
@@ -900,16 +1016,81 @@ func collectAcceptVariants(currentAccept string, seen []string) []string {
 	return out
 }
 
-func writeInvalidationURLPrefixes(parsedURL *url.URL, apiBasePath string) []string {
-	clean := url.URL{
-		Scheme: parsedURL.Scheme,
-		Host:   parsedURL.Host,
-		Path:   strings.TrimRight(parsedURL.Path, "/"),
+func canonicalCacheURL(u *url.URL) string {
+	if u == nil {
+		return ""
 	}
-	base := clean.String()
+	pathStr := canonicalEscapedPath(u)
+	res := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + pathStr
+	if u.RawQuery != "" {
+		res += "?" + u.RawQuery
+	}
+	return res
+}
+
+func canonicalEscapedPath(u *url.URL) string {
+	rawPath := u.EscapedPath()
+	if rawPath == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(rawPath))
+	for i := 0; i < len(rawPath); i++ {
+		if rawPath[i] == '%' && i+2 < len(rawPath) {
+			if hi, ok1 := hexVal(rawPath[i+1]); ok1 {
+				if lo, ok2 := hexVal(rawPath[i+2]); ok2 {
+					ch := (hi << 4) | lo
+					if isRFC3986Unreserved(ch) {
+						b.WriteByte(ch)
+					} else {
+						b.WriteByte('%')
+						b.WriteByte(upperHex(hi))
+						b.WriteByte(upperHex(lo))
+					}
+					i += 2
+					continue
+				}
+			}
+		}
+		b.WriteByte(rawPath[i])
+	}
+	return b.String()
+}
+
+func hexVal(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	default:
+		return 0, false
+	}
+}
+
+func upperHex(v byte) byte {
+	if v < 10 {
+		return '0' + v
+	}
+	return 'A' + (v - 10)
+}
+
+func isRFC3986Unreserved(b byte) bool {
+	return (b >= 'A' && b <= 'Z') ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= '0' && b <= '9') ||
+		b == '-' || b == '.' || b == '_' || b == '~'
+}
+
+func writeInvalidationURLPrefixes(parsedURL *url.URL, apiBasePath string) []string {
+	canonPath := strings.TrimRight(canonicalEscapedPath(parsedURL), "/")
+	schemeHost := strings.ToLower(parsedURL.Scheme) + "://" + strings.ToLower(parsedURL.Host)
+	base := schemeHost + canonPath
 	prefixes := []string{base}
 
-	relPath := clean.Path
+	relPath := canonPath
 	prefixApplied := ""
 	if apiBasePath != "" && strings.HasPrefix(relPath, apiBasePath) {
 		trimmedRel := strings.TrimPrefix(relPath, apiBasePath)
@@ -928,17 +1109,11 @@ func writeInvalidationURLPrefixes(parsedURL *url.URL, apiBasePath string) []stri
 	switch {
 	case len(segs) > 4 && segs[0] == "repos":
 		// E.g. PATCH /repos/o/r/issues/42 also invalidates cached /repos/o/r/issues lists.
-		parent := clean
-		parent.Path = prefixApplied + "/" + strings.Join(segs[:len(segs)-1], "/")
-		prefixes = append(prefixes, parent.String())
+		prefixes = append(prefixes, schemeHost+prefixApplied+"/"+strings.Join(segs[:len(segs)-1], "/"))
 	case len(segs) >= 3 && segs[0] == "user" && (segs[1] == "starred" || segs[1] == "following" || segs[1] == "subscriptions"):
-		parent := clean
-		parent.Path = prefixApplied + "/" + strings.Join(segs[:2], "/")
-		prefixes = append(prefixes, parent.String())
+		prefixes = append(prefixes, schemeHost+prefixApplied+"/"+strings.Join(segs[:2], "/"))
 	case len(segs) == 2 && segs[0] == "gists":
-		parent := clean
-		parent.Path = prefixApplied + "/gists"
-		prefixes = append(prefixes, parent.String())
+		prefixes = append(prefixes, schemeHost+prefixApplied+"/gists")
 	}
 
 	return prefixes
@@ -1066,7 +1241,7 @@ func parseAPIError(statusCode int, headers http.Header, body []byte, defaultReso
 	}
 }
 
-func recordAPIErrorCooldown(apiErr *APIError) {
+func recordAPIErrorCooldownScoped(ownerScope string, apiErr *APIError) {
 	if apiErr == nil || !apiErr.RateLimited {
 		return
 	}
@@ -1080,7 +1255,7 @@ func recordAPIErrorCooldown(apiErr *APIError) {
 	default:
 		return
 	}
-	RecordRateLimitCooldown(apiErr.Resource, until)
+	RecordRateLimitCooldownScoped(ownerScope, apiErr.Resource, until)
 }
 
 func parseRetryAfter(val string) time.Duration {
@@ -1132,10 +1307,27 @@ type PageInfo struct {
 }
 
 // ParseNextPageURL extracts the URL with rel="next" from an RFC 8288 Link header.
-// It returns an empty string if no valid next link is present.
+// Relative references (such as "?page=2") are preserved; use ParseNextPageURLWithBase
+// to resolve them against a base URL.
 func ParseNextPageURL(linkHeader string) string {
+	return ParseNextPageURLWithBase(linkHeader, "")
+}
+
+// ParseNextPageURLWithBase extracts the URL with rel="next" from an RFC 8288 Link header
+// and resolves relative references against baseURL when provided.
+func ParseNextPageURLWithBase(linkHeader, baseURL string) string {
 	if strings.TrimSpace(linkHeader) == "" {
 		return ""
+	}
+
+	var baseParsed *url.URL
+	if strings.TrimSpace(baseURL) != "" {
+		if bp, err := url.Parse(strings.TrimSpace(baseURL)); err == nil && bp.Host != "" {
+			scheme := strings.ToLower(bp.Scheme)
+			if scheme == "http" || scheme == "https" {
+				baseParsed = bp
+			}
+		}
 	}
 
 	for _, entry := range splitLinkHeaderEntries(linkHeader) {
@@ -1153,9 +1345,26 @@ func ParseNextPageURL(linkHeader string) string {
 		if !hasNextLinkRel(params) {
 			continue
 		}
+		if strings.HasPrefix(rawURL, "//") {
+			continue
+		}
 
 		parsed, err := url.Parse(rawURL)
 		if err != nil {
+			continue
+		}
+		if parsed.Scheme == "" {
+			if baseParsed != nil {
+				resolved := baseParsed.ResolveReference(parsed)
+				scheme := strings.ToLower(resolved.Scheme)
+				if (scheme == "http" || scheme == "https") && resolved.Host != "" {
+					return resolved.String()
+				}
+				continue
+			}
+			if parsed.Host == "" {
+				return rawURL
+			}
 			continue
 		}
 		scheme := strings.ToLower(parsed.Scheme)
@@ -1166,6 +1375,18 @@ func ParseNextPageURL(linkHeader string) string {
 	}
 
 	return ""
+}
+
+// NextPageURL extracts and resolves the rel="next" URL across all Link header values.
+func NextPageURL(headers http.Header, baseURL string) string {
+	if headers == nil {
+		return ""
+	}
+	values := headers.Values("Link")
+	if len(values) == 0 {
+		return ""
+	}
+	return ParseNextPageURLWithBase(strings.Join(values, ", "), baseURL)
 }
 
 // HasNextPage reports whether the RFC 8288 Link header contains a valid rel="next" link.
