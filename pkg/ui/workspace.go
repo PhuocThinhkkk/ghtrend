@@ -8,6 +8,7 @@ import (
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,22 +33,34 @@ const (
 
 // WorkspaceService provides GitHub API operations for the Repository Workspace.
 type WorkspaceService struct {
-	FetchMetadata    func(ctx context.Context, owner, repo string) (ghclient.RepoMetadata, error)
-	FetchRefs        func(ctx context.Context, owner, repo string) ([]ghclient.RefInfo, error)
-	FetchTree        func(ctx context.Context, owner, repo, ref string) ([]ghclient.TreeEntry, bool, error)
-	FetchDirContents func(ctx context.Context, owner, repo, dirPath, ref string) ([]ghclient.TreeEntry, error)
-	FetchFile        func(ctx context.Context, owner, repo, filePath, ref string) (ghclient.FileContent, error)
-	FetchREADME      func(ctx context.Context, owner, repo, ref string) (string, error)
+	FetchMetadata      func(ctx context.Context, owner, repo string) (ghclient.RepoMetadata, error)
+	FetchRefs          func(ctx context.Context, owner, repo string) ([]ghclient.RefInfo, error)
+	FetchTree          func(ctx context.Context, owner, repo, ref string) ([]ghclient.TreeEntry, bool, error)
+	FetchDirContents   func(ctx context.Context, owner, repo, dirPath, ref string) ([]ghclient.TreeEntry, error)
+	FetchFile          func(ctx context.Context, owner, repo, filePath, ref string) (ghclient.FileContent, error)
+	FetchREADME        func(ctx context.Context, owner, repo, ref string) (string, error)
+	FetchPRs           func(ctx context.Context, owner, repo, state string, page int) ([]ghclient.PullRequest, bool, error)
+	FetchPRTimeline    func(ctx context.Context, owner, repo string, number int) ([]ghclient.TimelineComment, error)
+	FetchIssues        func(ctx context.Context, owner, repo, state string, page int) ([]ghclient.Issue, bool, error)
+	FetchIssueTimeline func(ctx context.Context, owner, repo string, number int) ([]ghclient.TimelineComment, error)
+	CreateComment      func(ctx context.Context, owner, repo string, number int, body string) (ghclient.TimelineComment, error)
+	UpdateIssueState   func(ctx context.Context, owner, repo string, number int, state string) (ghclient.Issue, error)
 }
 
 func defaultWorkspaceService() WorkspaceService {
 	return WorkspaceService{
-		FetchMetadata:    ghclient.FetchRepoMetadata,
-		FetchRefs:        ghclient.FetchRepoRefs,
-		FetchTree:        ghclient.FetchRepoTree,
-		FetchDirContents: ghclient.FetchRepoDirContents,
-		FetchFile:        ghclient.FetchFileContent,
-		FetchREADME:      ghclient.FetchRepoREADME,
+		FetchMetadata:      ghclient.FetchRepoMetadata,
+		FetchRefs:          ghclient.FetchRepoRefs,
+		FetchTree:          ghclient.FetchRepoTree,
+		FetchDirContents:   ghclient.FetchRepoDirContents,
+		FetchFile:          ghclient.FetchFileContent,
+		FetchREADME:        ghclient.FetchRepoREADME,
+		FetchPRs:           ghclient.FetchPullRequests,
+		FetchPRTimeline:    ghclient.FetchPullRequestTimeline,
+		FetchIssues:        ghclient.FetchIssues,
+		FetchIssueTimeline: ghclient.FetchIssueTimeline,
+		CreateComment:      ghclient.CreateIssueComment,
+		UpdateIssueState:   ghclient.UpdateIssueState,
 	}
 }
 
@@ -72,6 +85,24 @@ func (m Model) activeWorkspaceService() WorkspaceService {
 		}
 		if svc.FetchREADME == nil {
 			svc.FetchREADME = def.FetchREADME
+		}
+		if svc.FetchPRs == nil {
+			svc.FetchPRs = def.FetchPRs
+		}
+		if svc.FetchPRTimeline == nil {
+			svc.FetchPRTimeline = def.FetchPRTimeline
+		}
+		if svc.FetchIssues == nil {
+			svc.FetchIssues = def.FetchIssues
+		}
+		if svc.FetchIssueTimeline == nil {
+			svc.FetchIssueTimeline = def.FetchIssueTimeline
+		}
+		if svc.CreateComment == nil {
+			svc.CreateComment = def.CreateComment
+		}
+		if svc.UpdateIssueState == nil {
+			svc.UpdateIssueState = def.UpdateIssueState
 		}
 		return svc
 	}
@@ -129,6 +160,47 @@ type workspaceModel struct {
 
 	readmeRaw    string
 	readmeLoaded bool
+
+	prSeq             uint64
+	prs               []ghclient.PullRequest
+	prsLoaded         bool
+	prsLoading        bool
+	prsErr            error
+	prFilter          string
+	prPage            int
+	prHasNext         bool
+	prCursor          int
+	prOffset          int
+	prDetail          *ghclient.PullRequest
+	prTimeline        []ghclient.TimelineComment
+	prTimelineLoading bool
+	prTimelineErr     error
+	prViewport        viewport.Model
+
+	issueSeq             uint64
+	issues               []ghclient.Issue
+	issuesLoaded         bool
+	issuesLoading        bool
+	issuesErr            error
+	issueFilter          string
+	issuePage            int
+	issueHasNext         bool
+	issueCursor          int
+	issueOffset          int
+	issueDetail          *ghclient.Issue
+	issueTimeline        []ghclient.TimelineComment
+	issueTimelineLoading bool
+	issueTimelineErr     error
+	issueViewport        viewport.Model
+	issueStateUpdating   bool
+
+	commentSeq          uint64
+	showCommentModal    bool
+	commentTargetKind   string
+	commentTargetNumber int
+	commentInput        textarea.Model
+	commentSubmitting   bool
+	commentErr          error
 }
 
 type wsMetadataLoadedMsg struct {
@@ -203,22 +275,30 @@ func (m *Model) openWorkspace(owner, repo, breadcrumb string, prev appState) tea
 
 	vp := viewport.New(60, 16)
 	vp.SetContent("_Loading repository README..._")
+	prVP := viewport.New(60, 16)
+	issueVP := viewport.New(60, 16)
 
 	m.workspace = workspaceModel{
-		seq:          seq,
-		refSeq:       refSeq,
-		owner:        owner,
-		repo:         repo,
-		activeRef:    "",
-		breadcrumb:   breadcrumb,
-		prevState:    prev,
-		tab:          wsTabCode,
-		codeFocus:    wsFocusTree,
-		branchFilter: bf,
-		expanded:     make(map[string]bool),
-		dirChildren:  make(map[string][]ghclient.TreeEntry),
-		viewer:       vp,
-		viewerTitle:  "README",
+		seq:           seq,
+		refSeq:        refSeq,
+		owner:         owner,
+		repo:          repo,
+		activeRef:     "",
+		breadcrumb:    breadcrumb,
+		prevState:     prev,
+		tab:           wsTabCode,
+		codeFocus:     wsFocusTree,
+		branchFilter:  bf,
+		expanded:      make(map[string]bool),
+		dirChildren:   make(map[string][]ghclient.TreeEntry),
+		viewer:        vp,
+		viewerTitle:   "README",
+		prFilter:      "open",
+		prPage:        1,
+		prViewport:    prVP,
+		issueFilter:   "open",
+		issuePage:     1,
+		issueViewport: issueVP,
 	}
 
 	m.state = stateWorkspace
@@ -421,6 +501,127 @@ func (m *Model) handleWorkspaceMsg(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		m.refreshWorkspaceViewerContent()
 		return nil, true
+	case wsPRsLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.reqSeq != m.workspace.prSeq {
+			return nil, true
+		}
+		m.workspace.prsLoading = false
+		m.workspace.prsLoaded = true
+		m.workspace.prsErr = msg.err
+		if msg.err == nil {
+			m.workspace.prs = msg.prs
+			m.workspace.prFilter = msg.filter
+			m.workspace.prPage = msg.page
+			m.workspace.prHasNext = msg.hasNext
+			m.workspace.clampPRCursor(m.workspaceListVisibleRows())
+		}
+		return nil, true
+	case wsPRTimelineLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq {
+			return nil, true
+		}
+		if m.workspace.prDetail == nil || m.workspace.prDetail.Number != msg.number {
+			return nil, true
+		}
+		m.workspace.prTimelineLoading = false
+		m.workspace.prTimelineErr = msg.err
+		if msg.err == nil {
+			m.workspace.prTimeline = msg.comments
+		}
+		m.refreshPRDetailContent()
+		return nil, true
+	case wsIssuesLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.reqSeq != m.workspace.issueSeq {
+			return nil, true
+		}
+		m.workspace.issuesLoading = false
+		m.workspace.issuesLoaded = true
+		m.workspace.issuesErr = msg.err
+		if msg.err == nil {
+			m.workspace.issues = msg.issues
+			m.workspace.issueFilter = msg.filter
+			m.workspace.issuePage = msg.page
+			m.workspace.issueHasNext = msg.hasNext
+			m.workspace.clampIssueCursor(m.workspaceListVisibleRows())
+		}
+		return nil, true
+	case wsIssueTimelineLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq {
+			return nil, true
+		}
+		if m.workspace.issueDetail == nil || m.workspace.issueDetail.Number != msg.number {
+			return nil, true
+		}
+		m.workspace.issueTimelineLoading = false
+		m.workspace.issueTimelineErr = msg.err
+		if msg.err == nil {
+			m.workspace.issueTimeline = msg.comments
+		}
+		m.refreshIssueDetailContent()
+		return nil, true
+	case wsCommentPostedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.reqSeq != m.workspace.commentSeq {
+			return nil, true
+		}
+		m.workspace.commentSubmitting = false
+		if msg.err != nil {
+			m.workspace.commentErr = msg.err
+			return nil, true
+		}
+		m.workspace.showCommentModal = false
+		m.workspace.commentInput.Blur()
+		if msg.kind == "pr" {
+			for i := range m.workspace.prs {
+				if m.workspace.prs[i].Number == msg.number {
+					m.workspace.prs[i].CommentCount++
+				}
+			}
+			if m.workspace.prDetail != nil && m.workspace.prDetail.Number == msg.number {
+				m.workspace.prDetail.CommentCount++
+				m.workspace.prTimeline = append(m.workspace.prTimeline, msg.comment)
+				m.refreshPRDetailContent()
+				return tea.Batch(
+					wsFetchPRTimelineCmd(m.activeWorkspaceService(), m.workspace.seq, m.workspace.owner, m.workspace.repo, msg.number),
+					m.setTransientToast("💬 Comment posted to PR", 2*time.Second),
+				), true
+			}
+		} else if msg.kind == "issue" {
+			for i := range m.workspace.issues {
+				if m.workspace.issues[i].Number == msg.number {
+					m.workspace.issues[i].CommentCount++
+				}
+			}
+			if m.workspace.issueDetail != nil && m.workspace.issueDetail.Number == msg.number {
+				m.workspace.issueDetail.CommentCount++
+				m.workspace.issueTimeline = append(m.workspace.issueTimeline, msg.comment)
+				m.refreshIssueDetailContent()
+				return tea.Batch(
+					wsFetchIssueTimelineCmd(m.activeWorkspaceService(), m.workspace.seq, m.workspace.owner, m.workspace.repo, msg.number),
+					m.setTransientToast("💬 Comment posted to Issue", 2*time.Second),
+				), true
+			}
+		}
+		return m.setTransientToast("💬 Comment posted", 2*time.Second), true
+	case wsIssueStateUpdatedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq {
+			return nil, true
+		}
+		m.workspace.issueStateUpdating = false
+		if msg.err != nil {
+			return m.setTransientToast("⚠ "+msg.err.Error(), 3*time.Second), true
+		}
+		for i := range m.workspace.issues {
+			if m.workspace.issues[i].Number == msg.number {
+				m.workspace.issues[i].State = msg.issue.State
+				m.workspace.issues[i].StateReason = msg.issue.StateReason
+			}
+		}
+		if m.workspace.issueDetail != nil && m.workspace.issueDetail.Number == msg.number {
+			m.workspace.issueDetail.State = msg.issue.State
+			m.workspace.issueDetail.StateReason = msg.issue.StateReason
+			m.refreshIssueDetailContent()
+		}
+		return m.setTransientToast(fmt.Sprintf("Issue #%d marked %s", msg.number, msg.issue.State), 2*time.Second), true
 	}
 	return nil, false
 }
@@ -478,6 +679,12 @@ func (w *workspaceModel) applyBranchFilter() {
 func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc":
+		if m.workspace.tab == wsTabPRs && m.workspace.prDetail != nil {
+			return m.updateWorkspacePRs(msg)
+		}
+		if m.workspace.tab == wsTabIssues && m.workspace.issueDetail != nil {
+			return m.updateWorkspaceIssues(msg)
+		}
 		m.workspace.seq++
 		prev := m.workspace.prevState
 		if prev == stateLoading || prev == stateError || prev == stateWorkspace {
@@ -494,19 +701,19 @@ func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
 
 	case "tab":
 		m.workspace.tab = (m.workspace.tab + 1) % 4
-		return nil
+		return m.ensureActiveWorkspaceTabLoaded()
 	case "shift+tab":
 		m.workspace.tab = (m.workspace.tab + 3) % 4
-		return nil
+		return m.ensureActiveWorkspaceTabLoaded()
 	case "1":
 		m.workspace.tab = wsTabCode
 		return nil
 	case "2":
 		m.workspace.tab = wsTabPRs
-		return nil
+		return m.ensureWorkspacePRsLoaded()
 	case "3":
 		m.workspace.tab = wsTabIssues
-		return nil
+		return m.ensureWorkspaceIssuesLoaded()
 	case "4":
 		m.workspace.tab = wsTabCommits
 		return nil
@@ -545,8 +752,23 @@ func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.workspace.tab == wsTabCode {
+	switch m.workspace.tab {
+	case wsTabCode:
 		return m.updateWorkspaceCode(msg)
+	case wsTabPRs:
+		return m.updateWorkspacePRs(msg)
+	case wsTabIssues:
+		return m.updateWorkspaceIssues(msg)
+	}
+	return nil
+}
+
+func (m *Model) ensureActiveWorkspaceTabLoaded() tea.Cmd {
+	switch m.workspace.tab {
+	case wsTabPRs:
+		return m.ensureWorkspacePRsLoaded()
+	case wsTabIssues:
+		return m.ensureWorkspaceIssuesLoaded()
 	}
 	return nil
 }
@@ -592,6 +814,15 @@ func (m Model) workspaceTreeVisibleRows() int {
 	return max(1, treeH-2)
 }
 
+func (m Model) workspaceListVisibleRows() int {
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	availH := max(6, h-m.workspaceHeaderHeight(h)-1)
+	return max(1, availH-4)
+}
+
 func (m *Model) recalculateWorkspaceLayout(width, height int) {
 	if width <= 0 {
 		width = 80
@@ -612,12 +843,31 @@ func (m *Model) recalculateWorkspaceLayout(width, height int) {
 		m.workspace.viewer.Width = max(20, width-4)
 		m.workspace.viewer.Height = max(1, viewerH-2)
 	}
+	m.workspace.prViewport.Width = max(20, width-4)
+	m.workspace.prViewport.Height = max(1, availH-2)
+	m.workspace.issueViewport.Width = max(20, width-4)
+	m.workspace.issueViewport.Height = max(1, availH-2)
+	if m.workspace.prDetail != nil {
+		m.refreshPRDetailContent()
+	}
+	if m.workspace.issueDetail != nil {
+		m.refreshIssueDetailContent()
+	}
+	if m.workspace.showCommentModal {
+		m.workspace.commentInput.SetWidth(max(36, min(76, width-12)))
+		m.workspace.commentInput.SetHeight(max(5, min(10, height-12)))
+	}
 	m.workspace.clampTreeCursor(m.workspaceTreeVisibleRows())
+	m.workspace.clampPRCursor(m.workspaceListVisibleRows())
+	m.workspace.clampIssueCursor(m.workspaceListVisibleRows())
 }
 
 func (m Model) renderWorkspaceView(width, height int) string {
 	if m.workspace.showBranchModal {
 		return m.renderWorkspaceBranchModal(width, height)
+	}
+	if m.workspace.showCommentModal {
+		return m.renderWorkspaceCommentModal(width, height)
 	}
 
 	header := m.renderWorkspaceHeader(width, height)
@@ -629,9 +879,9 @@ func (m Model) renderWorkspaceView(width, height int) string {
 	case wsTabCode:
 		body = m.renderWorkspaceCodeTab(width, availH)
 	case wsTabPRs:
-		body = m.renderWorkspacePlaceholderTab(width, availH, "2: Pull Requests", "Pull Requests viewer, review timelines & commenting will arrive in PR #4.")
+		body = m.renderWorkspacePRsTab(width, availH)
 	case wsTabIssues:
-		body = m.renderWorkspacePlaceholderTab(width, availH, "3: Issues", "Issues explorer, label badges, timelines & commenting will arrive in PR #4.")
+		body = m.renderWorkspaceIssuesTab(width, availH)
 	case wsTabCommits:
 		body = m.renderWorkspacePlaceholderTab(width, availH, "4: Commits", "Commits history & color-coded unified Diff viewer will arrive in PR #5.")
 	}
