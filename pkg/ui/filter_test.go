@@ -103,6 +103,19 @@ func TestModel_FilterWorkflow(t *testing.T) {
 		t.Errorf("expected filter input to be empty, got %q", m.filterInput.Value())
 	}
 
+	// 4b. Zero-match filter must NOT fall back to unfiltered repoList
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = newM.(Model)
+	for _, r := range "zzzznomatch" {
+		newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = newM.(Model)
+	}
+	if got := len(m.activeRepoList()); got != 0 {
+		t.Fatalf("expected activeRepoList() length 0 for unmatched query, got %d", got)
+	}
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = newM.(Model)
+
 	// 5. Press '/' then 'esc' to cancel filter while typing
 	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	m = newM.(Model)

@@ -70,17 +70,17 @@ type Model struct {
 	userProfile    *ghclient.UserProfile
 	filtering      bool
 	filterInput    textinput.Model
-	toastMessage     string
-	toastID          int
-	currentPage      int
-	hasMorePages     bool
-	loadingNextPage  bool
-	cursorDebounceID int
-	avatarMode       AvatarMode
+	toastMessage    string
+	toastID         int
+	currentPage     int
+	hasMorePages    bool
+	loadingNextPage bool
+	cursorDebouncer Debouncer
+	avatarMode      AvatarMode
 }
 
 type debounceCursorMsg struct {
-	id     int
+	id     uint64
 	cursor int
 }
 
@@ -99,8 +99,8 @@ type nextPageLoadedMsg struct {
 	err     error
 }
 
-func debounceCursorCmd(id, cursor int, d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg {
+func (m *Model) scheduleCursorDebounce(cursor int) tea.Cmd {
+	return m.cursorDebouncer.Schedule(func(id uint64) tea.Msg {
 		return debounceCursorMsg{id: id, cursor: cursor}
 	})
 }
@@ -165,7 +165,7 @@ func (m *Model) applyFilter() tea.Cmd {
 	if query == "" {
 		m.filteredRepos = m.repoList
 	} else {
-		var matched []Repo
+		matched := []Repo{}
 		for _, r := range m.repoList {
 			nameMatch := strings.Contains(strings.ToLower(r.Name), query)
 			ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
@@ -189,9 +189,7 @@ func (m *Model) applyFilter() tea.Cmd {
 	cursor := m.table.Cursor()
 	if cursor >= 0 && cursor < len(repos) {
 		if !repos[cursor].DetailsLoaded {
-			m.cursorDebounceID++
-			dID := m.cursorDebounceID
-			return debounceCursorCmd(dID, cursor, 180*time.Millisecond)
+			return m.scheduleCursorDebounce(cursor)
 		}
 	}
 	return nil
@@ -322,9 +320,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err := utils.OpenBrowser(repo.Url); err != nil {
 						m.toastMessage = "❌ Failed to open browser"
 					} else {
+						repoRunes := []rune(repo.Name)
 						repoName := repo.Name
-						if len(repoName) > 25 {
-							repoName = repoName[:22] + "..."
+						if len(repoRunes) > 25 {
+							repoName = string(repoRunes[:22]) + "..."
 						}
 						m.toastMessage = fmt.Sprintf("🌐 Opened %s", repoName)
 					}
@@ -365,6 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, clearToastCmd(id, 2*time.Second)
 				}
 				if m.cfg != nil {
+					m.cursorDebouncer.Cancel()
 					m.cfg.Since = flags.NextFrequency(m.cfg.Since)
 					m.toastID++
 					id := m.toastID
@@ -505,7 +505,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case debounceCursorMsg:
-		if msg.id == m.cursorDebounceID && msg.cursor == m.table.Cursor() {
+		if m.cursorDebouncer.Matches(msg.id) && msg.cursor == m.table.Cursor() {
 			repos := m.activeRepoList()
 			if msg.cursor >= 0 && msg.cursor < len(repos) {
 				r := repos[msg.cursor]
@@ -574,7 +574,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if query == "" {
 				m.filteredRepos = m.repoList
 			} else {
-				var matched []Repo
+				matched := []Repo{}
 				for _, r := range m.repoList {
 					nameMatch := strings.Contains(strings.ToLower(r.Name), query)
 					ownerMatch := strings.Contains(strings.ToLower(r.Owner), query)
@@ -648,9 +648,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateReadmeContent()
 
 			if !currRepo.DetailsLoaded {
-				m.cursorDebounceID++
-				dID := m.cursorDebounceID
-				cmds = append(cmds, debounceCursorCmd(dID, newCursor, 180*time.Millisecond))
+				cmds = append(cmds, m.scheduleCursorDebounce(newCursor))
 			}
 
 			if m.userProfile != nil && m.hasMorePages && !m.loadingNextPage && m.cfg != nil && m.cfg.User != "" {
