@@ -97,7 +97,8 @@ func TestLoadLanguageBreakdown_ModernSSRSkeletonFallback(t *testing.T) {
 }
 
 func TestLoadLanguageBreakdown_APIFailureFallbackToPrimary(t *testing.T) {
-	// API returns 500 error
+	t.Cleanup(func() { SetRateLimitInfo(RateLimitInfo{}) })
+	// API returns 429 error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 	}))

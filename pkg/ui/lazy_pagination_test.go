@@ -87,7 +87,7 @@ func TestDebounceAndRepoDetailsLoadedMsg(t *testing.T) {
 
 	// Move cursor to repo 2
 	m.table.SetCursor(1)
-	m.cursorDebounceID = 5
+	m.cursorDebouncer.id = 5
 
 	// Mismatched debounce ID should be ignored
 	ignoredMsg := debounceCursorMsg{id: 4, cursor: 1}

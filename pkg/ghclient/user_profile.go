@@ -2,7 +2,7 @@ package ghclient
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,7 +35,10 @@ type UserProfile struct {
 
 var (
 	githubWebBaseURL      = "https://github.com"
-	userProfileHTTPClient = &http.Client{Timeout: 5 * time.Second}
+	userProfileHTTPClient = &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: AuthSafeRedirectPolicy(),
+	}
 )
 
 // GetUserProfile fetches a user's GitHub profile, extracting bio, avatar, stats, and pinned work.
@@ -54,8 +57,12 @@ func GetUserProfile(username string) (*UserProfile, error) {
 	scrapeErr := scrapeUserProfile(username, profile)
 
 	// 2. Fall back to GitHub User API if scraping failed or avatar is missing
+	var apiErr error
 	if scrapeErr != nil || profile.AvatarURL == "" {
-		_ = fetchUserProfileFromAPI(username, profile)
+		apiErr = fetchUserProfileFromAPI(username, profile)
+	}
+	if scrapeErr != nil && apiErr != nil {
+		return nil, fmt.Errorf("failed to fetch user profile for %q: %w", username, errors.Join(scrapeErr, apiErr))
 	}
 
 	// 3. Render avatar to ASCII, High-Resolution Half-Block, and Braille art (cached on disk)
@@ -67,6 +74,9 @@ func GetUserProfile(username string) (*UserProfile, error) {
 // RefreshAvatars re-renders the avatar in ASCII, half-block, and braille modes
 // ensuring the ANSI string is freshly computed and never served from an outdated disk cache.
 func (profile *UserProfile) RefreshAvatars(width, height int) {
+	if profile == nil {
+		return
+	}
 	if width <= 0 {
 		width = 28
 	}
@@ -102,10 +112,11 @@ func scrapeUserProfile(username string, profile *UserProfile) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("profile scrape status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxAPIResponseBytes))
 	if err != nil {
 		return err
 	}
@@ -174,8 +185,8 @@ func fetchContributionsFragment(username string, profile *UserProfile) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	fragmentURL := fmt.Sprintf("https://github.com/users/%s/contributions", url.PathEscape(username))
-	req, err := http.NewRequestWithContext(ctx, "GET", fragmentURL, nil)
+	fragmentURL := fmt.Sprintf("%s/users/%s/contributions", githubWebBaseURL, url.PathEscape(username))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fragmentURL, nil)
 	if err != nil {
 		return
 	}
@@ -187,9 +198,9 @@ func fetchContributionsFragment(username string, profile *UserProfile) {
 		return
 	}
 	defer resp.Body.Close()
-	UpdateRateLimitFromHeaders(resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return
 	}
 
@@ -229,30 +240,7 @@ func fetchUserProfileFromAPI(username string, profile *UserProfile) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
-	apiURL := fmt.Sprintf("%s/users/%s", githubAPIBaseURL, url.PathEscape(username))
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "ghtrend")
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	if token := getGitHubAuthToken(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := apiHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	UpdateRateLimitFromHeaders(resp.Header)
-
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("user api status %d", resp.StatusCode)
-	}
-
+	apiPath := fmt.Sprintf("/users/%s", url.PathEscape(username))
 	var data struct {
 		Name        string `json:"name"`
 		Bio         string `json:"bio"`
@@ -265,7 +253,7 @@ func fetchUserProfileFromAPI(username string, profile *UserProfile) error {
 		Blog        string `json:"blog"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if _, err := activeAPIClient().DoREST(ctx, http.MethodGet, apiPath, nil, "", &data); err != nil {
 		return err
 	}
 

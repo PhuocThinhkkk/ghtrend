@@ -12,6 +12,9 @@ import (
 var fetchUserReposHook = Fetch
 
 func GetAllTrendingRepos(cfg *flags.CmdConfig) (RepoList, error) {
+	if cfg == nil {
+		cfg = &flags.CmdConfig{Limit: 2202, Since: flags.Daily, Language: "All"}
+	}
 	urlStr := "https://github.com/trending"
 	if cfg.Language != "All" && strings.TrimSpace(cfg.Language) != "" {
 		urlStr += "/" + url.PathEscape(strings.ToLower(strings.TrimSpace(cfg.Language)))
@@ -82,6 +85,9 @@ func FetchUserRepositoriesPage(username, language string, page int) (RepoList, b
 // GetUserRepositories fetches and populates repository information for a specified GitHub user.
 // It loads page 1 initially (up to 20 repos) and populates details for the first repository.
 func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
 	username := strings.TrimSpace(cfg.User)
 	if username == "" {
 		return nil, fmt.Errorf("username cannot be empty")
@@ -92,12 +98,35 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 		limit = 20
 	}
 
-	repos, _, err := FetchUserRepositoriesPage(username, cfg.Language, 1)
+	repos, hasMore, err := FetchUserRepositoriesPage(username, cfg.Language, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch repositories for user '%s': %w", username, err)
 	}
 	if len(repos) == 0 {
 		return nil, fmt.Errorf("no repositories found for user '%s'", username)
+	}
+
+	// If an explicit limit above page 1 size (30) was requested (not the default 2202),
+	// eagerly fetch up to that limit (capped at 10 pages to protect rate limits).
+	if limit > 30 && limit < 2202 && hasMore {
+		seen := make(map[string]bool, len(repos))
+		for _, r := range repos {
+			seen[strings.ToLower(r.Owner+"/"+r.Name)] = true
+		}
+		for page := 2; page <= 10 && hasMore && len(repos) < limit; page++ {
+			nextPage, more, pageErr := FetchUserRepositoriesPage(username, cfg.Language, page)
+			if pageErr != nil || len(nextPage) == 0 {
+				break
+			}
+			for _, r := range nextPage {
+				key := strings.ToLower(r.Owner + "/" + r.Name)
+				if !seen[key] {
+					seen[key] = true
+					repos = append(repos, r)
+				}
+			}
+			hasMore = more
+		}
 	}
 
 	profile, _ := GetUserProfile(username)
@@ -130,12 +159,8 @@ func GetUserRepositories(cfg *flags.CmdConfig) (RepoList, error) {
 		repos = append(pinnedList, regularList...)
 	}
 
-	initialBatch := 20
-	if limit > 0 && limit < initialBatch {
-		initialBatch = limit
-	}
-	if limit <= initialBatch && len(repos) > initialBatch {
-		repos = repos[:initialBatch]
+	if limit > 0 && limit < 2202 && len(repos) > limit {
+		repos = repos[:limit]
 	}
 
 	for i := range repos {

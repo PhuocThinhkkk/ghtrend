@@ -2,13 +2,10 @@ package ghclient
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -18,61 +15,45 @@ import (
 )
 
 var (
-	githubAPIBaseURL  = "https://api.github.com"
-	cachedGHToken     string
-	cachedGHTokenOnce sync.Once
+	githubAPIBaseURL = defaultAPIBaseURL
 
 	apiHTTPClient = &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:       5 * time.Second,
+		CheckRedirect: AuthSafeRedirectPolicy(),
 	}
 )
 
 func getGitHubAuthToken() string {
-	cachedGHTokenOnce.Do(func() {
-		if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
-			cachedGHToken = token
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+	return ResolveAuthToken()
+}
 
-		if tokenBytes, err := exec.CommandContext(ctx, "gh", "auth", "token").Output(); err == nil {
-			cachedGHToken = strings.TrimSpace(string(tokenBytes))
-		}
-	})
-	return cachedGHToken
+func activeAPIClient() *Client {
+	defaultClientMu.Lock()
+	def := DefaultClient
+	defaultClientMu.Unlock()
+
+	if githubAPIBaseURL == defaultAPIBaseURL && def != nil {
+		return def
+	}
+	return &Client{
+		APIBaseURL: githubAPIBaseURL,
+		GraphQLURL: defaultGraphQLURL,
+		WebBaseURL: githubWebBaseURL,
+		HTTPClient: apiHTTPClient,
+		TokenFunc:  ResolveAuthToken,
+	}
 }
 
 func fetchLanguagesFromAPI(owner, repo string) (map[string]string, error) {
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("invalid owner or repo")
 	}
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/languages", githubAPIBaseURL, url.PathEscape(owner), url.PathEscape(repo))
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "ghtrend")
-	req.Header.Set("Accept", "application/vnd.github+json")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	if token := getGitHubAuthToken(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := apiHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	UpdateRateLimitFromHeaders(resp.Header)
-
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("github api status %d", resp.StatusCode)
-	}
-
+	apiPath := fmt.Sprintf("/repos/%s/%s/languages", url.PathEscape(owner), url.PathEscape(repo))
 	var byteCounts map[string]int64
-	if err := json.NewDecoder(resp.Body).Decode(&byteCounts); err != nil {
+	if _, err := activeAPIClient().DoREST(ctx, http.MethodGet, apiPath, nil, "", &byteCounts); err != nil {
 		return nil, err
 	}
 
@@ -102,30 +83,10 @@ func fetchCommitsFromAPI(owner, repo string) ([]Commit, error) {
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("invalid owner or repo")
 	}
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/commits?per_page=15", githubAPIBaseURL, url.PathEscape(owner), url.PathEscape(repo))
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "ghtrend")
-	req.Header.Set("Accept", "application/vnd.github+json")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	if token := getGitHubAuthToken(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := apiHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	UpdateRateLimitFromHeaders(resp.Header)
-
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("github api status %d", resp.StatusCode)
-	}
-
+	apiPath := fmt.Sprintf("/repos/%s/%s/commits?per_page=15", url.PathEscape(owner), url.PathEscape(repo))
 	var data []struct {
 		Sha    string `json:"sha"`
 		Commit struct {
@@ -136,11 +97,11 @@ func fetchCommitsFromAPI(owner, repo string) ([]Commit, error) {
 		} `json:"commit"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if _, err := activeAPIClient().DoREST(ctx, http.MethodGet, apiPath, nil, "", &data); err != nil {
 		return nil, err
 	}
 
-	var commits []Commit
+	commits := make([]Commit, 0, len(data))
 	for _, item := range data {
 		hash := item.Sha
 		if len(hash) > 7 {
@@ -196,6 +157,9 @@ type RepoList []Repo
 // LoadDetails fetches and populates Readme, RootInfo, ExtraInfo, LanguagesBreakdown,
 // and RecentCommits for the repository. If DetailsLoaded is already true, it returns immediately.
 func (r *Repo) LoadDetails() error {
+	if r == nil {
+		return errors.New("ghclient: nil repo")
+	}
 	if r.DetailsLoaded {
 		return nil
 	}
@@ -217,7 +181,11 @@ func (r *Repo) LoadDetails() error {
 
 	close(errChan)
 	if len(errChan) > 0 {
-		return <-errChan
+		var errs []error
+		for e := range errChan {
+			errs = append(errs, e)
+		}
+		return errors.Join(errs...)
 	}
 	r.DetailsLoaded = true
 	return nil
@@ -399,13 +367,17 @@ func (r *Repo) loadCommits(errChan chan<- error, wg *sync.WaitGroup, signal <-ch
 
 func (r *Repo) loadHtmlPageTerm(errChan chan<- error, wg *sync.WaitGroup, signal chan<- struct{}) {
 	defer wg.Done()
-	url := "https://github.com/" + r.Owner + "/" + r.Name
-	res, err := Fetch(url)
+	defer close(signal)
+
+	if strings.TrimSpace(r.Owner) == "" || strings.TrimSpace(r.Name) == "" {
+		sendErrorNonBlocking(errChan, errors.New("ghclient: empty repo owner or name"))
+		return
+	}
+	pageURL := fmt.Sprintf("%s/%s/%s", strings.TrimRight(githubWebBaseURL, "/"), url.PathEscape(r.Owner), url.PathEscape(r.Name))
+	res, err := Fetch(pageURL)
 	if err != nil {
 		sendErrorNonBlocking(errChan, err)
-		close(signal)
 		return
 	}
 	r.HtmlPageTerm = string(res)
-	close(signal)
 }
