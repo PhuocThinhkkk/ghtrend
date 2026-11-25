@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/PhuocThinhkkk/ghtrend/pkg/app"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/cache"
 	"github.com/PhuocThinhkkk/ghtrend/pkg/configs/flags"
 	"github.com/spf13/cobra"
 )
@@ -19,30 +20,70 @@ var noCache bool
 var theme string
 var user string
 
-var rootCmd = &cobra.Command{
-	Use:   "ghtrend",
-	Short: "Explore GitHub Trending and user repositories directly from your terminal",
-	Run: func(cmd *cobra.Command, args []string) {
-		useCache := true
-		if cmd.Flags().Changed("no-cache") && noCache {
-			useCache = false
+func buildCmdConfig(cmd *cobra.Command, args []string) (*flags.CmdConfig, error) {
+	useCache := true
+	if cmd.Flags().Changed("no-cache") && noCache {
+		useCache = false
+	}
+	fred := flags.Frequency(since)
+	cfg, err := flags.NewConfig(useCache, limit, fred, lang)
+	if err != nil {
+		return nil, err
+	}
+	if cmd.Flags().Changed("theme") {
+		cfg.Theme = theme
+	}
+	if cmd.Flags().Changed("user") {
+		trimmedUser := strings.TrimSpace(user)
+		u, ok := cache.ParseUserTarget(trimmedUser)
+		if !ok {
+			return nil, fmt.Errorf("invalid GitHub username %q", trimmedUser)
 		}
-		fred := flags.Frequency(since)
-		cfg, err := flags.NewConfig(useCache, limit, fred, lang)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		if cmd.Flags().Changed("theme") {
-			cfg.Theme = theme
-		}
-		if cmd.Flags().Changed("user") {
-			trimmedUser := strings.TrimSpace(user)
-			if trimmedUser == "" {
-				fmt.Fprintln(os.Stderr, "❌ Error: username cannot be empty")
-				os.Exit(1)
+		cfg.User = u
+	}
+
+	if len(args) > 0 {
+		target := strings.TrimSpace(args[0])
+		if target != "" {
+			if cmd.Flags().Changed("user") {
+				return nil, fmt.Errorf("cannot combine --user with positional target %q", target)
 			}
-			cfg.User = trimmedUser
+			if strings.HasPrefix(target, "@") {
+				if u, ok := cache.ParseUserTarget(target); ok {
+					cfg.User = u
+				} else {
+					return nil, fmt.Errorf("invalid GitHub username %q", target)
+				}
+			} else if owner, repo, ok := cache.ParseRepoSlug(target); ok {
+				cfg.DirectRepo = owner + "/" + repo
+			} else if u, ok := cache.ParseUserTarget(target); ok {
+				cfg.User = u
+			} else {
+				return nil, fmt.Errorf("invalid target %q (expected owner/repo or @username)", target)
+			}
+		}
+	}
+
+	hasActionFlag := cmd.Flags().Changed("user") ||
+		cmd.Flags().Changed("since") ||
+		cmd.Flags().Changed("lang") ||
+		cmd.Flags().Changed("limit") ||
+		cmd.Flags().Changed("no-cache")
+	if !hasActionFlag && cfg.User == "" && cfg.DirectRepo == "" {
+		cfg.LaunchHome = true
+	}
+	return cfg, nil
+}
+
+var rootCmd = &cobra.Command{
+	Use:   "ghtrend [owner/repo | @username]",
+	Short: "Explore GitHub Trending, user profiles, and repositories directly from your terminal",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg, err := buildCmdConfig(cmd, args)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "❌ Error:", err)
+			os.Exit(1)
 		}
 		application := app.NewApp(cfg)
 		application.Start()
@@ -54,7 +95,7 @@ func Execute() {
 	rootCmd.SilenceErrors = true
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ %v\n", err)
-		fmt.Fprintf(os.Stderr, "👉 Try '%s --help' for usage.\n", rootCmd.Use)
+		fmt.Fprintf(os.Stderr, "👉 Try '%s --help' for usage.\n", rootCmd.CommandPath())
 		os.Exit(1)
 	}
 }

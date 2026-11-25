@@ -48,12 +48,14 @@ func (f Frequency) DisplayTitle() string {
 }
 
 type CmdConfig struct {
-	IsCache  bool
-	Limit    int
-	Since    Frequency
-	Language string
-	Theme    string
-	User     string
+	IsCache    bool
+	Limit      int
+	Since      Frequency
+	Language   string
+	Theme      string
+	User       string
+	LaunchHome bool
+	DirectRepo string
 }
 
 func NewConfig(cache bool, limit int, since Frequency, language string) (*CmdConfig, error) {
