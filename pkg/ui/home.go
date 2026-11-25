@@ -56,16 +56,20 @@ type homeModel struct {
 }
 
 type historyLoadedMsg struct {
-	seq     uint64
-	entries []cache.HistoryEntry
-	err     error
+	seq        uint64
+	clearGen   uint64
+	fromRecord bool
+	entries    []cache.HistoryEntry
+	err        error
 }
 
 type historyActionDoneMsg struct {
-	seq     uint64
-	entries []cache.HistoryEntry
-	toast   string
-	err     error
+	seq      uint64
+	clearGen uint64
+	cleared  bool
+	entries  []cache.HistoryEntry
+	toast    string
+	err      error
 }
 
 func newHomeModel(cfg *flags.CmdConfig) homeModel {
@@ -82,7 +86,7 @@ func newHomeModel(cfg *flags.CmdConfig) homeModel {
 
 	ti := textinput.New()
 	ti.Prompt = "▶ "
-	ti.CharLimit = 128
+	ti.CharLimit = 256
 	ti.Width = 34
 
 	return homeModel{
@@ -152,19 +156,22 @@ func loadHistoryCmd(store *cache.HistoryStore, seq uint64) tea.Cmd {
 	}
 }
 
-func recordHistoryCmd(store *cache.HistoryStore, entry cache.HistoryEntry, seq uint64) tea.Cmd {
+func recordHistoryCmd(store *cache.HistoryStore, entry cache.HistoryEntry, seq, expectedGen uint64) tea.Cmd {
 	return func() tea.Msg {
 		if store == nil {
 			return nil
 		}
-		if err := store.Record(entry); err != nil {
-			return historyActionDoneMsg{seq: seq, err: err}
+		if err := store.RecordIfGen(entry, expectedGen); err != nil {
+			return historyActionDoneMsg{seq: seq, clearGen: expectedGen, err: err}
+		}
+		if expectedGen != 0 && store.CurrentGen() != expectedGen {
+			return nil
 		}
 		entries, err := store.Load()
 		if err != nil {
-			return historyActionDoneMsg{seq: seq, err: err}
+			return historyActionDoneMsg{seq: seq, clearGen: expectedGen, err: err}
 		}
-		return historyLoadedMsg{seq: seq, entries: entries}
+		return historyLoadedMsg{seq: seq, clearGen: expectedGen, fromRecord: true, entries: entries}
 	}
 }
 
@@ -189,15 +196,17 @@ func deleteHistoryCmd(store *cache.HistoryStore, id string, seq uint64) tea.Cmd 
 func clearHistoryCmd(store *cache.HistoryStore, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		if store == nil {
-			return historyActionDoneMsg{seq: seq, entries: []cache.HistoryEntry{}}
+			return historyActionDoneMsg{seq: seq, cleared: true, entries: []cache.HistoryEntry{}}
 		}
 		if err := store.Clear(); err != nil {
 			return historyActionDoneMsg{seq: seq, err: err}
 		}
 		return historyActionDoneMsg{
-			seq:     seq,
-			entries: []cache.HistoryEntry{},
-			toast:   "🧹 History cleared",
+			seq:      seq,
+			clearGen: store.CurrentGen(),
+			cleared:  true,
+			entries:  []cache.HistoryEntry{},
+			toast:    "🧹 History cleared",
 		}
 	}
 }
@@ -307,6 +316,7 @@ func (m *Model) updateHome(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		m.historyReqSeq++
+		m.historyClearGen++
 		return clearHistoryCmd(m.launchOpts.HistoryStore, m.historyReqSeq)
 	}
 

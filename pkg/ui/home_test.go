@@ -331,6 +331,9 @@ func TestHomeHistory_StaleRefreshDeleteClearAndProfileReset(t *testing.T) {
 			m = updated.(Model)
 		}
 	}
+	if m.state != stateDashboard || len(m.repoList) != 1 || m.repoList[0].Name != "trend-daily-all" {
+		t.Fatalf("expected Daily Trending dashboard after reopen, got state=%v repos=%+v", m.state, m.repoList)
+	}
 	if m.userProfile != nil {
 		t.Fatalf("expected m.userProfile to be cleared when switching to Trending, got %+v", m.userProfile)
 	}
@@ -369,30 +372,54 @@ func TestHome_AsyncSeqDropsStaleResultsAndPreservesDetails(t *testing.T) {
 	m := newTestHomeModel(nil)
 	m.launchSeq = 1
 
-	// Launch Daily Trending (launchSeq becomes 2)
+	// Launch Daily Trending A (launchSeq becomes 2)
 	updated, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	seq1Msgs := execBatchMsgs(cmd1)
-
-	// Go Home immediately before seq1 response arrives -> launchSeq becomes 3, toast clears
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
-	m = updated.(Model)
-	if m.state != stateHome || m.launchSeq != 3 {
-		t.Fatalf("expected stateHome with launchSeq=3, got state=%v seq=%d", m.state, m.launchSeq)
+	var seq1Result reposLoadedMsg
+	var hasSeq1Result bool
+	for _, msg := range seq1Msgs {
+		if rl, ok := msg.(reposLoadedMsg); ok {
+			seq1Result = rl
+			hasSeq1Result = true
+		}
+	}
+	if !hasSeq1Result {
+		t.Fatalf("expected launch A to produce reposLoadedMsg")
 	}
 
-	// Stale seq1 reposLoadedMsg arrives while back on Home -> must be discarded!
-	for _, msg := range seq1Msgs {
+	// Go Home and immediately start replacement launch B (launchSeq becomes 4, stateLoading)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(Model)
+	updated, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.state != stateLoading || m.launchSeq != 4 {
+		t.Fatalf("expected stateLoading for launch B with launchSeq=4, got state=%v seq=%d", m.state, m.launchSeq)
+	}
+
+	// Deliver stale launch A result while B is still loading -> must keep B in stateLoading!
+	updated, _ = m.Update(seq1Result)
+	m = updated.(Model)
+	if m.state != stateLoading || m.launchSeq != 4 {
+		t.Fatalf("stale launch A hijacked loading launch B: state=%v seq=%d", m.state, m.launchSeq)
+	}
+
+	// Now deliver launch B result -> transitions to B's dashboard
+	for _, msg := range execBatchMsgs(cmd2) {
 		if rl, ok := msg.(reposLoadedMsg); ok {
 			updated, _ = m.Update(rl)
 			m = updated.(Model)
 		}
 	}
-	if m.state != stateHome {
-		t.Fatalf("stale reposLoadedMsg illegally transitioned Home to %v", m.state)
+	if m.state != stateDashboard || len(m.repoList) != 1 || m.repoList[0].Name != "trend-weekly-all" {
+		t.Fatalf("expected launch B dashboard, got state=%v repos=%+v", m.state, m.repoList)
 	}
 
-	// Launch DirectRepo with loaded ExtraInfor/LanguagesBreakDown/RecentCommits, then simulate stale refresh
+	// Return Home and launch DirectRepo with loaded ExtraInfor/LanguagesBreakDown/RecentCommits
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	m = updated.(Model)
 	for _, r := range "charmbracelet/lipgloss" {
@@ -424,8 +451,8 @@ func TestHome_AsyncSeqDropsStaleResultsAndPreservesDetails(t *testing.T) {
 		isBackgroundRefresh: true,
 	})
 	m = updated.(Model)
-	if len(m.repoList) != 1 || !m.repoList[0].DetailsLoaded || m.repoList[0].ExtraInfor.TotalCommits != 42 || len(m.repoList[0].RecentCommits) != 1 {
-		t.Fatalf("expected applyRefreshedRepos to preserve ExtraInfor & RecentCommits, got %+v", m.repoList)
+	if len(m.repoList) != 1 || m.repoList[0].Stars != "9999" || !m.repoList[0].DetailsLoaded || m.repoList[0].ExtraInfor.TotalCommits != 42 || len(m.repoList[0].RecentCommits) != 1 {
+		t.Fatalf("expected applyRefreshedRepos to update Stars=9999 and preserve ExtraInfor & RecentCommits, got %+v", m.repoList)
 	}
 	// Wrong-seq details/pagination must be ignored
 	updated, _ = m.Update(repoDetailsLoadedMsg{launchSeq: m.launchSeq - 1, owner: "charmbracelet", name: "lipgloss", err: tea.ErrProgramKilled})

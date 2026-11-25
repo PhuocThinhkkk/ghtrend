@@ -103,6 +103,7 @@ type Model struct {
 	activeTargetID      string
 	launchSeq           uint64
 	historyReqSeq       uint64
+	historyClearGen     uint64
 	refreshingStale     bool
 	lastLaunchCmd       func() tea.Cmd
 	pendingHistoryEntry *cache.HistoryEntry
@@ -310,7 +311,7 @@ func (m *Model) launchTrending(since flags.Frequency, language string) tea.Cmd {
 		}
 	}
 	m.lastLaunchCmd = runner
-	return tea.Batch(m.loading.Init(), runner())
+	return tea.Batch(m.loading.InitWithSeq(seq), runner())
 }
 
 func (m *Model) launchUser(username, language string) tea.Cmd {
@@ -378,7 +379,7 @@ func (m *Model) launchUser(username, language string) tea.Cmd {
 		}
 	}
 	m.lastLaunchCmd = runner
-	return tea.Batch(m.loading.Init(), runner())
+	return tea.Batch(m.loading.InitWithSeq(seq), runner())
 }
 
 func (m *Model) launchDirectRepo(owner, repo string) tea.Cmd {
@@ -430,7 +431,7 @@ func (m *Model) launchDirectRepo(owner, repo string) tea.Cmd {
 		}
 	}
 	m.lastLaunchCmd = runner
-	return tea.Batch(m.loading.Init(), runner())
+	return tea.Batch(m.loading.InitWithSeq(seq), runner())
 }
 
 func refreshStaleCmd(launchSeq uint64, targetID string, fn func() ([]Repo, error)) tea.Cmd {
@@ -518,16 +519,29 @@ func (m *Model) applyRefreshedRepos(repos []Repo) tea.Cmd {
 		m.userProfile.RefreshAvatars(28, 14)
 	}
 
-	m.currentPage = 1
-	m.loadingNextPage = false
-	if m.userProfile != nil && m.cfg != nil && m.cfg.User != "" {
-		maxLimit := 2202
-		if m.cfg.Limit > 0 {
-			maxLimit = m.cfg.Limit
+	if m.currentPage > 1 {
+		seen := make(map[string]bool, len(merged))
+		for _, r := range merged {
+			seen[strings.ToLower(r.Owner+"/"+r.Name)] = true
 		}
-		m.hasMorePages = len(merged) >= 15 && len(merged) < maxLimit
+		for _, old := range m.repoList {
+			key := strings.ToLower(old.Owner + "/" + old.Name)
+			if !seen[key] {
+				seen[key] = true
+				merged = append(merged, old)
+			}
+		}
 	} else {
-		m.hasMorePages = false
+		m.currentPage = 1
+		if m.userProfile != nil && m.cfg != nil && m.cfg.User != "" {
+			maxLimit := 2202
+			if m.cfg.Limit > 0 {
+				maxLimit = m.cfg.Limit
+			}
+			m.hasMorePages = len(merged) >= 15 && len(merged) < maxLimit
+		} else {
+			m.hasMorePages = false
+		}
 	}
 
 	m.repoList = merged
@@ -564,12 +578,12 @@ func (m Model) Init() tea.Cmd {
 	if m.state == stateLoading {
 		if m.lastLaunchCmd != nil {
 			return tea.Batch(
-				m.loading.Init(),
+				m.loading.InitWithSeq(m.launchSeq),
 				m.lastLaunchCmd(),
 			)
 		}
 		return tea.Batch(
-			m.loading.Init(),
+			m.loading.InitWithSeq(m.launchSeq),
 			fetchReposCmd(m.fetcher, m.launchSeq),
 		)
 	}
@@ -598,7 +612,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case historyLoadedMsg:
-		if msg.seq != 0 && msg.seq != m.historyReqSeq {
+		acceptRecord := msg.fromRecord && m.state == stateHome && msg.clearGen == m.historyClearGen
+		if !acceptRecord && msg.seq != 0 && msg.seq != m.historyReqSeq {
 			return m, nil
 		}
 		if msg.err != nil {
@@ -760,17 +775,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cfg != nil {
 					nextSince := flags.NextFrequency(m.cfg.Since)
 					m.cfg.Since = nextSince
-					if m.launchOpts.FetchTrending != nil {
-						launchCmd := m.launchTrending(nextSince, m.cfg.Language)
+					if m.fetcher != nil && m.launchOpts.FetchTrending == nil {
+						m.launchSeq++
+						m.cursorDebouncer.Cancel()
+						m.state = stateLoading
+						m.loading = newLoadingModelWithTheme(m.theme)
 						toastCmd := m.setTransientToast(fmt.Sprintf("📅 %s Trending", nextSince.DisplayTitle()), 2*time.Second)
-						return m, tea.Batch(launchCmd, toastCmd)
+						return m, tea.Batch(m.loading.InitWithSeq(m.launchSeq), fetchReposCmd(m.fetcher, m.launchSeq), toastCmd)
 					}
-					m.launchSeq++
-					m.cursorDebouncer.Cancel()
-					m.state = stateLoading
-					m.loading = newLoadingModelWithTheme(m.theme)
+					launchCmd := m.launchTrending(nextSince, m.cfg.Language)
 					toastCmd := m.setTransientToast(fmt.Sprintf("📅 %s Trending", nextSince.DisplayTitle()), 2*time.Second)
-					return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher, m.launchSeq), toastCmd)
+					return m, tea.Batch(launchCmd, toastCmd)
 				}
 			}
 		case "?", "h":
@@ -783,9 +798,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateLoading
 				m.loading = newLoadingModelWithTheme(m.theme)
 				if m.lastLaunchCmd != nil {
-					return m, tea.Batch(m.loading.Init(), m.lastLaunchCmd())
+					return m, tea.Batch(m.loading.InitWithSeq(m.launchSeq), m.lastLaunchCmd())
 				}
-				return m, tea.Batch(m.loading.Init(), fetchReposCmd(m.fetcher, m.launchSeq))
+				return m, tea.Batch(m.loading.InitWithSeq(m.launchSeq), fetchReposCmd(m.fetcher, m.launchSeq))
 			}
 			if m.state == stateDashboard {
 				repo := m.getCursorRepo()
@@ -842,7 +857,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading.message = msg.message
 			cmds = append(cmds, m.loading.progress.SetPercent(msg.percent))
 			if msg.percent < 0.80 {
-				cmds = append(cmds, tickProgressWithSeq(m.launchSeq, msg.percent+0.25, "Parsing metrics & generating views...", 300*time.Millisecond))
+				nextSeq := msg.seq
+				if nextSeq == 0 {
+					nextSeq = m.launchSeq
+				}
+				cmds = append(cmds, tickProgressWithSeq(nextSeq, msg.percent+0.25, "Parsing metrics & generating views...", 300*time.Millisecond))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -929,7 +948,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				entryCopy.Subtitle = strings.TrimSpace(m.userProfile.Name)
 			}
 			m.historyReqSeq++
-			postCmds = append(postCmds, recordHistoryCmd(m.launchOpts.HistoryStore, entryCopy, m.historyReqSeq))
+			expectedGen := max(uint64(1), m.historyClearGen)
+			if m.launchOpts.HistoryStore != nil {
+				expectedGen = max(expectedGen, m.launchOpts.HistoryStore.CurrentGen())
+			}
+			postCmds = append(postCmds, recordHistoryCmd(m.launchOpts.HistoryStore, entryCopy, m.historyReqSeq, expectedGen))
 		}
 		if msg.stale && msg.refreshFn != nil {
 			m.refreshingStale = true
@@ -970,16 +993,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != stateDashboard || (msg.launchSeq != 0 && msg.launchSeq != m.launchSeq) {
 			return m, nil
 		}
+		mergeDetails := func(dst *Repo, src Repo) {
+			dst.DetailsLoaded = src.DetailsLoaded
+			dst.ReadMe = src.ReadMe
+			dst.RootInfor = src.RootInfor
+			dst.ExtraInfor = src.ExtraInfor
+			dst.LanguagesBreakDown = src.LanguagesBreakDown
+			dst.RecentCommits = src.RecentCommits
+			if dst.Url == "" {
+				dst.Url = src.Url
+			}
+		}
 		for i := range m.repoList {
 			if m.repoList[i].Owner == msg.owner && m.repoList[i].Name == msg.name {
-				m.repoList[i] = msg.repo
+				mergeDetails(&m.repoList[i], msg.repo)
 				break
 			}
 		}
 		if m.filteredRepos != nil {
 			for i := range m.filteredRepos {
 				if m.filteredRepos[i].Owner == msg.owner && m.filteredRepos[i].Name == msg.name {
-					m.filteredRepos[i] = msg.repo
+					mergeDetails(&m.filteredRepos[i], msg.repo)
 					break
 				}
 			}
@@ -1844,8 +1878,12 @@ func RenderWithOptions(opts LaunchOptions) (tea.Model, error) {
 		Language: "All",
 	}
 	if opts.Config != nil {
-		copied := *opts.Config
-		cfg = &copied
+		if opts.InitialFetcher != nil {
+			cfg = opts.Config
+		} else {
+			copied := *opts.Config
+			cfg = &copied
+		}
 	}
 
 	themeName := "catppuccin"
@@ -1859,17 +1897,23 @@ func RenderWithOptions(opts LaunchOptions) (tea.Model, error) {
 	}
 	th := theme.GetTheme(themeName)
 
+	clearGen := uint64(1)
+	if opts.HistoryStore != nil {
+		clearGen = max(clearGen, opts.HistoryStore.CurrentGen())
+	}
+
 	m := Model{
-		loading:       newLoadingModelWithTheme(th),
-		fetcher:       opts.InitialFetcher,
-		cfg:           cfg,
-		theme:         th,
-		width:         80,
-		height:        24,
-		launchOpts:    opts,
-		home:          newHomeModel(cfg),
-		launchSeq:     1,
-		historyReqSeq: 1,
+		loading:         newLoadingModelWithTheme(th),
+		fetcher:         opts.InitialFetcher,
+		cfg:             cfg,
+		theme:           th,
+		width:           80,
+		height:          24,
+		launchOpts:      opts,
+		home:            newHomeModel(cfg),
+		launchSeq:       1,
+		historyReqSeq:   1,
+		historyClearGen: clearGen,
 	}
 
 	switch {

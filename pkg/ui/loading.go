@@ -78,9 +78,13 @@ func newLoadingModelWithTheme(th theme.Theme) loadingModel {
 }
 
 func (l loadingModel) Init() tea.Cmd {
+	return l.InitWithSeq(0)
+}
+
+func (l loadingModel) InitWithSeq(seq uint64) tea.Cmd {
 	return tea.Batch(
 		l.spinner.Tick,
-		tickProgress(0.35, "Connecting to GitHub & fetching repositories...", 200*time.Millisecond),
+		tickProgressWithSeq(seq, 0.35, "Connecting to GitHub & fetching repositories...", 200*time.Millisecond),
 	)
 }
 
