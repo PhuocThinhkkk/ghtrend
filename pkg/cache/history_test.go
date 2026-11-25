@@ -548,4 +548,32 @@ func TestHistoryStore_RecoversCorruptFileAndSchemeLessUserURL(t *testing.T) {
 	if u, ok := ParseUserTarget("github.com/torvalds"); !ok || u != "torvalds" {
 		t.Fatalf("expected ParseUserTarget scheme-less URL to return torvalds, got %q ok=%v", u, ok)
 	}
+	if _, _, ok := ParseRepoSlug("owner/repo.git.git"); ok {
+		t.Fatalf("expected double .git suffix owner/repo.git.git to be rejected")
+	}
+
+	// Numeric timestamp fails Time.UnmarshalJSON and should be quarantined and recovered on Record.
+	badTSPath := filepath.Join(t.TempDir(), "history.json")
+	if err := os.WriteFile(badTSPath, []byte(`[{"id":"user:a","type":"USER","target":"a","last_visited":123}]`), 0644); err != nil {
+		t.Fatalf("WriteFile bad timestamp error = %v", err)
+	}
+	badTSStore := NewHistoryStore(badTSPath)
+	if err := badTSStore.Record(HistoryEntry{Type: HistoryTypeUser, Target: "alice", Label: "@alice"}); err != nil {
+		t.Fatalf("Record after corrupt timestamp failed: %v", err)
+	}
+
+	// Stale generation write after Clear must not resurrect cleared history.
+	genPath := filepath.Join(t.TempDir(), "gen-history.json")
+	genStore := NewHistoryStore(genPath)
+	genBefore := genStore.CurrentGen()
+	if err := genStore.Clear(); err != nil {
+		t.Fatalf("Clear error = %v", err)
+	}
+	if err := genStore.RecordIfGen(HistoryEntry{Type: HistoryTypeUser, Target: "stale", Label: "@stale"}, genBefore); err != nil {
+		t.Fatalf("RecordIfGen stale error = %v", err)
+	}
+	genEntries, err := genStore.Load()
+	if err != nil || len(genEntries) != 0 {
+		t.Fatalf("expected stale RecordIfGen to be skipped after Clear, got %+v err=%v", genEntries, err)
+	}
 }

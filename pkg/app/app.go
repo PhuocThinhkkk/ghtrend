@@ -177,9 +177,5 @@ func fetchDirectRepoSummary(owner, repo string) ([]ghclient.Repo, error) {
 	if apiErr != nil && detailsErr != nil {
 		return nil, apiErr
 	}
-	if apiErr == nil && !r.DetailsLoaded {
-		// REST metadata succeeded even if README/contents returned an error (e.g. 404).
-		r.DetailsLoaded = true
-	}
 	return []ghclient.Repo{r}, nil
 }

@@ -71,15 +71,16 @@ func DefaultHistoryPath() (string, error) {
 	return filepath.Join(dir, "history.json"), nil
 }
 
-var errHistoryOversized = errors.New("history file exceeded max allowed size")
+var (
+	errHistoryOversized = errors.New("history file exceeded max allowed size")
+	errHistoryCorrupt   = errors.New("history file is corrupt")
+)
 
 func isRecoverableHistoryErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	var syntaxErr *json.SyntaxError
-	var typeErr *json.UnmarshalTypeError
-	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr) || errors.Is(err, errHistoryOversized)
+	return errors.Is(err, errHistoryCorrupt) || errors.Is(err, errHistoryOversized)
 }
 
 // HistoryStore provides thread-safe, bounded persistent storage for HistoryEntry items.
@@ -87,6 +88,17 @@ type HistoryStore struct {
 	mu         sync.Mutex
 	path       string
 	maxEntries int
+	generation uint64
+}
+
+// CurrentGen returns the store's current clear generation counter.
+func (s *HistoryStore) CurrentGen() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
 }
 
 // NewHistoryStore constructs a HistoryStore backed by path, capped at 50 entries.
@@ -94,6 +106,7 @@ func NewHistoryStore(path string) *HistoryStore {
 	return &HistoryStore{
 		path:       path,
 		maxEntries: maxHistoryEntries,
+		generation: 1,
 	}
 }
 
@@ -121,6 +134,11 @@ func (s *HistoryStore) Load() ([]HistoryEntry, error) {
 // Record inserts or updates a history entry, deduplicating by canonical ID,
 // incrementing VisitCount, sorting newest first, capping at 50 entries, and persisting atomically.
 func (s *HistoryStore) Record(entry HistoryEntry) error {
+	return s.RecordIfGen(entry, 0)
+}
+
+// RecordIfGen records entry only if expectedGen is 0 or matches the store's current clear generation.
+func (s *HistoryStore) RecordIfGen(entry HistoryEntry, expectedGen uint64) error {
 	if s == nil || strings.TrimSpace(s.path) == "" {
 		return errors.New("history store path is empty")
 	}
@@ -137,12 +155,16 @@ func (s *HistoryStore) Record(entry HistoryEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if expectedGen != 0 && s.generation != expectedGen {
+		return nil
+	}
+
 	entries, err := s.loadLocked()
 	if err != nil {
 		if isRecoverableHistoryErr(err) {
-			corruptPath := s.path + ".corrupt"
-			_ = os.Remove(corruptPath)
-			_ = os.Rename(s.path, corruptPath)
+			if qErr := s.quarantineCorruptLocked(); qErr != nil {
+				return qErr
+			}
 			entries = []HistoryEntry{}
 		} else {
 			return err
@@ -216,7 +238,32 @@ func (s *HistoryStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.generation++
 	return s.writeLocked([]HistoryEntry{})
+}
+
+func (s *HistoryStore) quarantineCorruptLocked() error {
+	corruptPath := s.path + ".corrupt"
+	if err := os.Rename(s.path, corruptPath); err == nil {
+		return nil
+	}
+	if removeErr := os.Remove(corruptPath); removeErr == nil {
+		if err := os.Rename(s.path, corruptPath); err == nil {
+			return nil
+		}
+	}
+	// Fallback to a unique quarantine name if history.json.corrupt cannot be replaced.
+	tmpCorrupt, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".corrupt.*")
+	if err != nil {
+		return fmt.Errorf("quarantine corrupt history %q: %w", s.path, err)
+	}
+	altPath := tmpCorrupt.Name()
+	_ = tmpCorrupt.Close()
+	_ = os.Remove(altPath)
+	if err := os.Rename(s.path, altPath); err != nil {
+		return fmt.Errorf("quarantine corrupt history %q: %w", s.path, err)
+	}
+	return nil
 }
 
 func (s *HistoryStore) loadLocked() ([]HistoryEntry, error) {
@@ -242,7 +289,7 @@ func (s *HistoryStore) loadLocked() ([]HistoryEntry, error) {
 
 	var entries []HistoryEntry
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("decode history %q: %w", s.path, err)
+		return nil, fmt.Errorf("%w: decode history %q: %w", errHistoryCorrupt, s.path, err)
 	}
 	if entries == nil {
 		return []HistoryEntry{}, nil
@@ -307,6 +354,11 @@ func writeFileAtomic(path string, encoded []byte, kind string) error {
 	if closeErr != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close temp %s file: %w", kind, closeErr)
+	}
+
+	if info, statErr := os.Stat(path); statErr == nil && !info.Mode().IsRegular() {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace %s file %q: destination is not a regular file", kind, path)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -482,6 +534,9 @@ func ParseRepoSlug(raw string) (owner, repo string, ok bool) {
 
 	owner = parts[0]
 	repo = strings.TrimSuffix(parts[1], ".git")
+	if strings.HasSuffix(strings.ToLower(repo), ".git") {
+		return "", "", false
+	}
 
 	if owner == "." || owner == ".." || repo == "." || repo == ".." {
 		return "", "", false
