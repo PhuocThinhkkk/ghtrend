@@ -1,0 +1,882 @@
+package ui
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
+	"github.com/PhuocThinhkkk/ghtrend/pkg/utils"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+type workspaceTab int8
+
+const (
+	wsTabCode workspaceTab = iota
+	wsTabPRs
+	wsTabIssues
+	wsTabCommits
+)
+
+type workspaceCodeFocus int8
+
+const (
+	wsFocusTree workspaceCodeFocus = iota
+	wsFocusViewer
+)
+
+// WorkspaceService provides GitHub API operations for the Repository Workspace.
+type WorkspaceService struct {
+	FetchMetadata    func(ctx context.Context, owner, repo string) (ghclient.RepoMetadata, error)
+	FetchRefs        func(ctx context.Context, owner, repo string) ([]ghclient.RefInfo, error)
+	FetchTree        func(ctx context.Context, owner, repo, ref string) ([]ghclient.TreeEntry, bool, error)
+	FetchDirContents func(ctx context.Context, owner, repo, dirPath, ref string) ([]ghclient.TreeEntry, error)
+	FetchFile        func(ctx context.Context, owner, repo, filePath, ref string) (ghclient.FileContent, error)
+	FetchREADME      func(ctx context.Context, owner, repo, ref string) (string, error)
+}
+
+func defaultWorkspaceService() WorkspaceService {
+	return WorkspaceService{
+		FetchMetadata:    ghclient.FetchRepoMetadata,
+		FetchRefs:        ghclient.FetchRepoRefs,
+		FetchTree:        ghclient.FetchRepoTree,
+		FetchDirContents: ghclient.FetchRepoDirContents,
+		FetchFile:        ghclient.FetchFileContent,
+		FetchREADME:      ghclient.FetchRepoREADME,
+	}
+}
+
+func (m Model) activeWorkspaceService() WorkspaceService {
+	if m.launchOpts.Workspace != nil {
+		svc := *m.launchOpts.Workspace
+		def := defaultWorkspaceService()
+		if svc.FetchMetadata == nil {
+			svc.FetchMetadata = def.FetchMetadata
+		}
+		if svc.FetchRefs == nil {
+			svc.FetchRefs = def.FetchRefs
+		}
+		if svc.FetchTree == nil {
+			svc.FetchTree = def.FetchTree
+		}
+		if svc.FetchDirContents == nil {
+			svc.FetchDirContents = def.FetchDirContents
+		}
+		if svc.FetchFile == nil {
+			svc.FetchFile = def.FetchFile
+		}
+		if svc.FetchREADME == nil {
+			svc.FetchREADME = def.FetchREADME
+		}
+		return svc
+	}
+	return defaultWorkspaceService()
+}
+
+type treeNode struct {
+	entry    ghclient.TreeEntry
+	depth    int
+	expanded bool
+}
+
+type workspaceModel struct {
+	seq        uint64
+	refSeq     uint64
+	owner      string
+	repo       string
+	activeRef  string
+	breadcrumb string
+	prevState  appState
+	tab        workspaceTab
+	codeFocus  workspaceCodeFocus
+
+	meta       ghclient.RepoMetadata
+	metaLoaded bool
+	metaErr    error
+
+	refs            []ghclient.RefInfo
+	refsLoaded      bool
+	showBranchModal bool
+	branchFilter    textinput.Model
+	filteredRefs    []ghclient.RefInfo
+	branchIndex     int
+
+	allTree       []ghclient.TreeEntry
+	treeTruncated bool
+	treeLoaded    bool
+	treeErr       error
+	expanded      map[string]bool
+	dirChildren   map[string][]ghclient.TreeEntry
+	visibleNodes  []treeNode
+	treeCursor    int
+	treeOffset    int
+
+	viewer           viewport.Model
+	viewerTitle      string
+	viewerPath       string
+	viewerRawContent string
+	viewerIsMarkdown bool
+	viewerIsBinary   bool
+	viewerTruncated  bool
+	viewerFileSize   int64
+	viewerLoading    bool
+	viewerErr        error
+
+	readmeRaw    string
+	readmeLoaded bool
+}
+
+type wsMetadataLoadedMsg struct {
+	seq   uint64
+	owner string
+	repo  string
+	meta  ghclient.RepoMetadata
+	err   error
+}
+
+type wsRefsLoadedMsg struct {
+	seq   uint64
+	owner string
+	repo  string
+	refs  []ghclient.RefInfo
+	err   error
+}
+
+type wsTreeLoadedMsg struct {
+	seq       uint64
+	refSeq    uint64
+	owner     string
+	repo      string
+	ref       string
+	entries   []ghclient.TreeEntry
+	truncated bool
+	err       error
+}
+
+type wsDirLoadedMsg struct {
+	seq     uint64
+	refSeq  uint64
+	owner   string
+	repo    string
+	dirPath string
+	ref     string
+	entries []ghclient.TreeEntry
+	err     error
+}
+
+type wsREADMELoadedMsg struct {
+	seq     uint64
+	refSeq  uint64
+	owner   string
+	repo    string
+	ref     string
+	content string
+	err     error
+}
+
+type wsFileLoadedMsg struct {
+	seq      uint64
+	refSeq   uint64
+	owner    string
+	repo     string
+	filePath string
+	ref      string
+	file     ghclient.FileContent
+	err      error
+}
+
+func (m *Model) openWorkspace(owner, repo, breadcrumb string, prev appState) tea.Cmd {
+	m.cursorDebouncer.Cancel()
+	seq := m.workspace.seq + 1
+	refSeq := m.workspace.refSeq + 1
+
+	bf := textinput.New()
+	bf.Placeholder = "filter branches or tags..."
+	bf.Prompt = "🌿 "
+	bf.CharLimit = 120
+	bf.Width = 36
+
+	vp := viewport.New(60, 16)
+	vp.SetContent("_Loading repository README..._")
+
+	m.workspace = workspaceModel{
+		seq:          seq,
+		refSeq:       refSeq,
+		owner:        owner,
+		repo:         repo,
+		activeRef:    "",
+		breadcrumb:   breadcrumb,
+		prevState:    prev,
+		tab:          wsTabCode,
+		codeFocus:    wsFocusTree,
+		branchFilter: bf,
+		expanded:     make(map[string]bool),
+		dirChildren:  make(map[string][]ghclient.TreeEntry),
+		viewer:       vp,
+		viewerTitle:  "README",
+	}
+
+	m.state = stateWorkspace
+	m.toastMessage = ""
+	m.toastID++
+	m.recalculateWorkspaceLayout(m.width, m.height)
+
+	svc := m.activeWorkspaceService()
+	return tea.Batch(
+		wsFetchMetadataCmd(svc, seq, owner, repo),
+		wsFetchRefsCmd(svc, seq, owner, repo),
+		wsFetchTreeCmd(svc, seq, refSeq, owner, repo, "HEAD"),
+		wsFetchREADMECmd(svc, seq, refSeq, owner, repo, ""),
+	)
+}
+
+func wsFetchMetadataCmd(svc WorkspaceService, seq uint64, owner, repo string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		meta, err := svc.FetchMetadata(ctx, owner, repo)
+		return wsMetadataLoadedMsg{seq: seq, owner: owner, repo: repo, meta: meta, err: err}
+	}
+}
+
+func wsFetchRefsCmd(svc WorkspaceService, seq uint64, owner, repo string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		refs, err := svc.FetchRefs(ctx, owner, repo)
+		return wsRefsLoadedMsg{seq: seq, owner: owner, repo: repo, refs: refs, err: err}
+	}
+}
+
+func wsFetchTreeCmd(svc WorkspaceService, seq, refSeq uint64, owner, repo, ref string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		entries, truncated, err := svc.FetchTree(ctx, owner, repo, ref)
+		return wsTreeLoadedMsg{seq: seq, refSeq: refSeq, owner: owner, repo: repo, ref: ref, entries: entries, truncated: truncated, err: err}
+	}
+}
+
+func wsFetchDirCmd(svc WorkspaceService, seq, refSeq uint64, owner, repo, dirPath, ref string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		entries, err := svc.FetchDirContents(ctx, owner, repo, dirPath, ref)
+		return wsDirLoadedMsg{seq: seq, refSeq: refSeq, owner: owner, repo: repo, dirPath: dirPath, ref: ref, entries: entries, err: err}
+	}
+}
+
+func wsFetchREADMECmd(svc WorkspaceService, seq, refSeq uint64, owner, repo, ref string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		content, err := svc.FetchREADME(ctx, owner, repo, ref)
+		return wsREADMELoadedMsg{seq: seq, refSeq: refSeq, owner: owner, repo: repo, ref: ref, content: content, err: err}
+	}
+}
+
+func wsFetchFileCmd(svc WorkspaceService, seq, refSeq uint64, owner, repo, filePath, ref string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		file, err := svc.FetchFile(ctx, owner, repo, filePath, ref)
+		return wsFileLoadedMsg{seq: seq, refSeq: refSeq, owner: owner, repo: repo, filePath: filePath, ref: ref, file: file, err: err}
+	}
+}
+
+func (m *Model) switchWorkspaceRef(newRef string) tea.Cmd {
+	newRef = strings.TrimSpace(newRef)
+	if newRef == "" {
+		return nil
+	}
+	m.workspace.activeRef = newRef
+	m.workspace.showBranchModal = false
+	m.workspace.branchFilter.Reset()
+	m.workspace.branchFilter.Blur()
+
+	m.workspace.allTree = nil
+	m.workspace.visibleNodes = nil
+	m.workspace.treeLoaded = false
+	m.workspace.treeErr = nil
+	m.workspace.treeCursor = 0
+	m.workspace.treeOffset = 0
+	m.workspace.expanded = make(map[string]bool)
+	m.workspace.dirChildren = make(map[string][]ghclient.TreeEntry)
+
+	m.workspace.viewerPath = ""
+	m.workspace.viewerTitle = "README"
+	m.workspace.viewerRawContent = ""
+	m.workspace.viewerIsMarkdown = true
+	m.workspace.viewerIsBinary = false
+	m.workspace.viewerTruncated = false
+	m.workspace.viewerErr = nil
+	m.workspace.viewerLoading = false
+	m.workspace.readmeLoaded = false
+	m.workspace.readmeRaw = ""
+	m.workspace.viewer.SetContent("_Loading README for " + newRef + "..._")
+
+	m.workspace.refSeq++
+	svc := m.activeWorkspaceService()
+	seq := m.workspace.seq
+	refSeq := m.workspace.refSeq
+	return tea.Batch(
+		wsFetchTreeCmd(svc, seq, refSeq, m.workspace.owner, m.workspace.repo, newRef),
+		wsFetchREADMECmd(svc, seq, refSeq, m.workspace.owner, m.workspace.repo, newRef),
+		m.setTransientToast("🌿 Switched to "+newRef, 2*time.Second),
+	)
+}
+
+func (m *Model) handleWorkspaceMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case wsMetadataLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq {
+			return nil, true
+		}
+		m.workspace.metaLoaded = true
+		m.workspace.metaErr = msg.err
+		if msg.err == nil {
+			m.workspace.meta = msg.meta
+			if m.workspace.activeRef == "" && msg.meta.DefaultBranch != "" {
+				m.workspace.activeRef = msg.meta.DefaultBranch
+			}
+		}
+		m.recalculateWorkspaceLayout(m.width, m.height)
+		return nil, true
+
+	case wsRefsLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq {
+			return nil, true
+		}
+		m.workspace.refsLoaded = true
+		if msg.err == nil {
+			m.workspace.refs = msg.refs
+			m.workspace.applyBranchFilter()
+		}
+		return nil, true
+
+	case wsTreeLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.refSeq != m.workspace.refSeq {
+			return nil, true
+		}
+		m.workspace.treeLoaded = true
+		m.workspace.treeErr = msg.err
+		m.workspace.treeTruncated = msg.truncated
+		if msg.err == nil {
+			m.workspace.allTree = msg.entries
+			if msg.truncated && len(msg.entries) == 0 {
+				svc := m.activeWorkspaceService()
+				return wsFetchDirCmd(svc, m.workspace.seq, m.workspace.refSeq, m.workspace.owner, m.workspace.repo, "", m.workspaceActiveRefOrHEAD()), true
+			}
+			m.workspace.rebuildVisibleNodes()
+			m.workspace.clampTreeCursor(m.workspaceTreeVisibleRows())
+		}
+		return nil, true
+
+	case wsDirLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.refSeq != m.workspace.refSeq {
+			return nil, true
+		}
+		if msg.err == nil {
+			m.workspace.dirChildren[msg.dirPath] = msg.entries
+			m.workspace.rebuildVisibleNodes()
+			m.workspace.clampTreeCursor(m.workspaceTreeVisibleRows())
+		} else {
+			return m.setTransientToast("⚠ Failed to load directory: "+msg.err.Error(), 3*time.Second), true
+		}
+		return nil, true
+
+	case wsREADMELoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.refSeq != m.workspace.refSeq {
+			return nil, true
+		}
+		m.workspace.readmeLoaded = true
+		if msg.err == nil {
+			m.workspace.readmeRaw = msg.content
+		}
+		if m.workspace.viewerPath == "" {
+			m.refreshWorkspaceViewerContent()
+		}
+		return nil, true
+
+	case wsFileLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.refSeq != m.workspace.refSeq {
+			return nil, true
+		}
+		if msg.filePath != m.workspace.viewerPath {
+			return nil, true
+		}
+		m.workspace.viewerLoading = false
+		m.workspace.viewerErr = msg.err
+		if msg.err == nil {
+			m.workspace.viewerRawContent = msg.file.Content
+			m.workspace.viewerIsBinary = msg.file.IsBinary
+			m.workspace.viewerTruncated = msg.file.Truncated
+			m.workspace.viewerFileSize = msg.file.Size
+			m.workspace.viewerIsMarkdown = isMarkdownPath(msg.filePath)
+		}
+		m.refreshWorkspaceViewerContent()
+		return nil, true
+	}
+	return nil, false
+}
+
+func (m *Model) updateWorkspaceBranchModal(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "b":
+		m.workspace.showBranchModal = false
+		m.workspace.branchFilter.Reset()
+		m.workspace.branchFilter.Blur()
+		return nil
+	case "up", "ctrl+p":
+		if m.workspace.branchIndex > 0 {
+			m.workspace.branchIndex--
+		}
+		return nil
+	case "down", "ctrl+n":
+		if m.workspace.branchIndex < len(m.workspace.filteredRefs)-1 {
+			m.workspace.branchIndex++
+		}
+		return nil
+	case "enter":
+		if len(m.workspace.filteredRefs) > 0 && m.workspace.branchIndex >= 0 && m.workspace.branchIndex < len(m.workspace.filteredRefs) {
+			chosen := m.workspace.filteredRefs[m.workspace.branchIndex]
+			return m.switchWorkspaceRef(chosen.Name)
+		}
+		m.workspace.showBranchModal = false
+		return nil
+	default:
+		var cmd tea.Cmd
+		m.workspace.branchFilter, cmd = m.workspace.branchFilter.Update(msg)
+		m.workspace.applyBranchFilter()
+		return cmd
+	}
+}
+
+func (w *workspaceModel) applyBranchFilter() {
+	query := strings.ToLower(strings.TrimSpace(w.branchFilter.Value()))
+	if query == "" {
+		w.filteredRefs = append([]ghclient.RefInfo(nil), w.refs...)
+	} else {
+		filtered := make([]ghclient.RefInfo, 0, len(w.refs))
+		for _, r := range w.refs {
+			if strings.Contains(strings.ToLower(r.Name), query) || strings.Contains(strings.ToLower(r.Kind), query) {
+				filtered = append(filtered, r)
+			}
+		}
+		w.filteredRefs = filtered
+	}
+	if w.branchIndex >= len(w.filteredRefs) {
+		w.branchIndex = max(0, len(w.filteredRefs)-1)
+	}
+}
+
+func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		m.workspace.seq++
+		prev := m.workspace.prevState
+		if prev == stateLoading || prev == stateError || prev == stateWorkspace {
+			prev = stateDashboard
+		}
+		if prev == stateDashboard && len(m.repoList) == 0 {
+			return m.goHome()
+		}
+		m.state = prev
+		if prev == stateDashboard {
+			m.recalculateLayout(m.width, m.height)
+		}
+		return nil
+
+	case "tab":
+		m.workspace.tab = (m.workspace.tab + 1) % 4
+		return nil
+	case "shift+tab":
+		m.workspace.tab = (m.workspace.tab + 3) % 4
+		return nil
+	case "1":
+		m.workspace.tab = wsTabCode
+		return nil
+	case "2":
+		m.workspace.tab = wsTabPRs
+		return nil
+	case "3":
+		m.workspace.tab = wsTabIssues
+		return nil
+	case "4":
+		m.workspace.tab = wsTabCommits
+		return nil
+
+	case "b":
+		m.workspace.showBranchModal = true
+		m.workspace.branchFilter.Reset()
+		m.workspace.branchFilter.Focus()
+		m.workspace.applyBranchFilter()
+		for i, r := range m.workspace.filteredRefs {
+			if r.Name == m.workspace.activeRef {
+				m.workspace.branchIndex = i
+				break
+			}
+		}
+		return textinput.Blink
+
+	case "O":
+		url := m.workspaceRepoURL()
+		if url != "" {
+			if err := utils.OpenBrowser(url); err != nil {
+				return m.setTransientToast("❌ Failed to open browser", 2*time.Second)
+			}
+			return m.setTransientToast("🌐 Opened in browser", 2*time.Second)
+		}
+		return nil
+
+	case "y":
+		url := m.workspaceRepoURL()
+		if url != "" {
+			if err := utils.CopyToClipboard(url); err != nil {
+				return m.setTransientToast("❌ Failed to copy URL", 2*time.Second)
+			}
+			return m.setTransientToast("📋 Copied repo URL!", 2*time.Second)
+		}
+		return nil
+	}
+
+	if m.workspace.tab == wsTabCode {
+		return m.updateWorkspaceCode(msg)
+	}
+	return nil
+}
+
+func (m Model) workspaceRepoURL() string {
+	if strings.TrimSpace(m.workspace.meta.HTMLURL) != "" {
+		return m.workspace.meta.HTMLURL
+	}
+	if m.workspace.owner != "" && m.workspace.repo != "" {
+		return "https://github.com/" + m.workspace.owner + "/" + m.workspace.repo
+	}
+	return ""
+}
+
+func (m Model) workspaceActiveRefOrHEAD() string {
+	if strings.TrimSpace(m.workspace.activeRef) != "" {
+		return m.workspace.activeRef
+	}
+	return "HEAD"
+}
+
+func (m Model) workspaceHeaderHeight(height int) int {
+	if height >= 22 {
+		return 5
+	}
+	return 4
+}
+
+func (m Model) workspaceTreeVisibleRows() int {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	availH := max(6, h-m.workspaceHeaderHeight(h)-1)
+	if w >= 95 {
+		return max(1, availH-2)
+	}
+	treeH := max(5, availH*40/100)
+	return max(1, treeH-2)
+}
+
+func (m *Model) recalculateWorkspaceLayout(width, height int) {
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+	headerH := m.workspaceHeaderHeight(height)
+	availH := max(6, height-headerH-1)
+	if width >= 95 {
+		treeW := max(26, min(42, width*30/100))
+		viewerW := width - treeW
+		m.workspace.viewer.Width = max(20, viewerW-4)
+		m.workspace.viewer.Height = max(1, availH-2)
+	} else {
+		treeH := max(5, availH*40/100)
+		viewerH := max(4, availH-treeH)
+		m.workspace.viewer.Width = max(20, width-4)
+		m.workspace.viewer.Height = max(1, viewerH-2)
+	}
+	m.workspace.clampTreeCursor(m.workspaceTreeVisibleRows())
+}
+
+func (m Model) renderWorkspaceView(width, height int) string {
+	if m.workspace.showBranchModal {
+		return m.renderWorkspaceBranchModal(width, height)
+	}
+
+	header := m.renderWorkspaceHeader(width, height)
+	headerH := lipgloss.Height(header)
+	availH := max(4, height-headerH-1)
+
+	var body string
+	switch m.workspace.tab {
+	case wsTabCode:
+		body = m.renderWorkspaceCodeTab(width, availH)
+	case wsTabPRs:
+		body = m.renderWorkspacePlaceholderTab(width, availH, "2: Pull Requests", "Pull Requests viewer, review timelines & commenting will arrive in PR #4.")
+	case wsTabIssues:
+		body = m.renderWorkspacePlaceholderTab(width, availH, "3: Issues", "Issues explorer, label badges, timelines & commenting will arrive in PR #4.")
+	case wsTabCommits:
+		body = m.renderWorkspacePlaceholderTab(width, availH, "4: Commits", "Commits history & color-coded unified Diff viewer will arrive in PR #5.")
+	}
+
+	statusBar := m.renderWorkspaceStatusBar(width)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, statusBar)
+}
+
+func (m Model) renderWorkspaceHeader(width, height int) string {
+	headerH := m.workspaceHeaderHeight(height)
+	innerW := max(10, width-4)
+
+	crumbPrefix := "🏠"
+	if m.workspace.breadcrumb != "" {
+		crumbPrefix += " / " + m.workspace.breadcrumb
+	}
+	repoSlug := m.workspace.owner + "/" + m.workspace.repo
+	refName := m.workspace.activeRef
+	if refName == "" {
+		refName = "HEAD"
+	}
+
+	crumbText := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(crumbPrefix+" / ") +
+		lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render(repoSlug)
+	refBadge := lipgloss.NewStyle().
+		Foreground(m.theme.Background).
+		Background(m.theme.Secondary).
+		Bold(true).
+		Padding(0, 1).
+		Render("🌿 " + refName)
+
+	tabDefs := []struct {
+		id    workspaceTab
+		label string
+	}{
+		{wsTabCode, "1:Code"},
+		{wsTabPRs, "2:PRs"},
+		{wsTabIssues, "3:Issues"},
+		{wsTabCommits, "4:Commits"},
+	}
+	var tabParts []string
+	for _, td := range tabDefs {
+		if m.workspace.tab == td.id {
+			tabParts = append(tabParts, lipgloss.NewStyle().
+				Bold(true).
+				Foreground(m.theme.Background).
+				Background(m.theme.Primary).
+				Padding(0, 1).
+				Render(td.label))
+		} else {
+			tabParts = append(tabParts, lipgloss.NewStyle().
+				Foreground(m.theme.Muted).
+				Background(m.theme.Surface).
+				Padding(0, 1).
+				Render(td.label))
+		}
+	}
+	tabsBlock := strings.Join(tabParts, " ")
+
+	leftTop := crumbText + " " + refBadge
+	var line1 string
+	if lipgloss.Width(leftTop)+lipgloss.Width(tabsBlock)+2 <= innerW {
+		gap := innerW - lipgloss.Width(leftTop) - lipgloss.Width(tabsBlock)
+		line1 = leftTop + strings.Repeat(" ", gap) + tabsBlock
+	} else {
+		line1 = TruncateDisplayWidth(repoSlug+" ["+refName+"] "+tabsBlock, innerW, "…")
+	}
+
+	metaLine := "Loading repository metadata..."
+	if m.workspace.metaErr != nil {
+		metaLine = "⚠ " + m.workspace.metaErr.Error()
+	} else if m.workspace.metaLoaded {
+		mt := m.workspace.meta
+		parts := []string{
+			fmt.Sprintf("★ %d", mt.Stars),
+			fmt.Sprintf("⑂ %d", mt.Forks),
+			fmt.Sprintf("👁 %d", mt.Watchers),
+		}
+		if mt.License != "" {
+			parts = append(parts, "⚖ "+mt.License)
+		}
+		if mt.Language != "" {
+			parts = append(parts, "● "+mt.Language)
+		}
+		if len(mt.Topics) > 0 {
+			maxTopics := min(4, len(mt.Topics))
+			parts = append(parts, "#"+strings.Join(mt.Topics[:maxTopics], " #"))
+		}
+		metaLine = strings.Join(parts, "  ")
+	}
+	line2 := lipgloss.NewStyle().Foreground(m.theme.Accent).Render(TruncateDisplayWidth(metaLine, innerW, "…"))
+
+	lines := []string{" " + line1, " " + line2}
+	if headerH >= 5 {
+		desc := strings.TrimSpace(m.workspace.meta.Description)
+		if desc == "" && m.workspace.metaLoaded {
+			desc = "No description provided."
+		}
+		line3 := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(TruncateDisplayWidth(desc, innerW, "…"))
+		lines = append(lines, " "+line3)
+	}
+
+	return WrapInTitledBorder(strings.Join(lines, "\n"), width, headerH, "Repository Workspace", true, m.theme)
+}
+
+func (m Model) renderWorkspacePlaceholderTab(width, height int, title, message string) string {
+	innerW := max(10, width-4)
+	msg := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(TruncateDisplayWidth(message, innerW, "…"))
+	return WrapInTitledBorder("\n "+msg, width, height, title, true, m.theme)
+}
+
+func (m Model) renderWorkspaceBranchModal(width, height int) string {
+	boxW := min(60, max(36, width-6))
+	innerW := boxW - 6
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Primary).Render("🌿 SWITCH BRANCH / TAG")
+	inCopy := m.workspace.branchFilter
+	inCopy.Width = max(16, innerW-4)
+
+	maxRows := max(4, min(12, height-10))
+	var rows []string
+	if !m.workspace.refsLoaded {
+		rows = append(rows, lipgloss.NewStyle().Foreground(m.theme.Muted).Render("  Loading branches & tags..."))
+	} else if len(m.workspace.filteredRefs) == 0 {
+		rows = append(rows, lipgloss.NewStyle().Foreground(m.theme.Muted).Render("  No matching branches or tags."))
+	} else {
+		start := 0
+		if m.workspace.branchIndex >= maxRows {
+			start = m.workspace.branchIndex - maxRows + 1
+		}
+		end := min(len(m.workspace.filteredRefs), start+maxRows)
+		for i := start; i < end; i++ {
+			r := m.workspace.filteredRefs[i]
+			kindTag := "branch"
+			if r.Kind == "tag" {
+				kindTag = "tag"
+			}
+			activeMark := "  "
+			if r.Name == m.workspace.activeRef {
+				activeMark = "✓ "
+			}
+			label := TruncateDisplayWidth(fmt.Sprintf("%s%-6s %s", activeMark, "["+kindTag+"]", r.Name), innerW, "…")
+			if i == m.workspace.branchIndex {
+				rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(m.theme.Background).Background(m.theme.Primary).Render(padRightDisplay(label, innerW)))
+			} else {
+				rows = append(rows, lipgloss.NewStyle().Foreground(m.theme.Text).Render(label))
+			}
+		}
+	}
+
+	hint := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(TruncateDisplayWidth("[↑/↓] Select  [Enter] Switch  [Esc] Close", innerW, "…"))
+	sections := []string{title, "", inCopy.View(), "", strings.Join(rows, "\n"), "", hint}
+
+	card := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Primary).
+		Padding(1, 2).
+		Width(boxW).
+		MaxWidth(width).
+		MaxHeight(height).
+		Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m Model) renderWorkspaceStatusBar(width int) string {
+	refName := m.workspaceActiveRefOrHEAD()
+	repoPill := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Background).
+		Background(m.theme.Primary).
+		Padding(0, 1).
+		Render(TruncateDisplayWidth(fmt.Sprintf("📦 %s/%s@%s", m.workspace.owner, m.workspace.repo, refName), max(14, width/3), "…"))
+
+	var toastPill string
+	if m.toastMessage != "" {
+		toastPill = lipgloss.NewStyle().
+			Foreground(m.theme.Background).
+			Background(m.theme.Accent).
+			Bold(true).
+			Padding(0, 1).
+			Render(m.toastMessage)
+	}
+
+	themePill := lipgloss.NewStyle().
+		Foreground(m.theme.Text).
+		Background(m.theme.Surface).
+		Padding(0, 1).
+		Render("🎨 " + m.theme.ID)
+
+	var rateLimitPill string
+	rlInfo := ghclient.GetRateLimitInfo()
+	if text, isWarn, isCrit := rlInfo.FormatRateLimitIndicator(); text != "" {
+		rlStyle := lipgloss.NewStyle().Foreground(m.theme.Muted).Background(m.theme.Surface).Padding(0, 1)
+		if isCrit {
+			rlStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1b26")).Background(lipgloss.Color("#f7768e")).Bold(true).Padding(0, 1)
+		} else if isWarn {
+			rlStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1b26")).Background(lipgloss.Color("#e0af68")).Bold(true).Padding(0, 1)
+		}
+		rateLimitPill = rlStyle.Render(text)
+	}
+
+	items := []string{repoPill}
+	if toastPill != "" {
+		items = append(items, " ", toastPill)
+	}
+	items = append(items, " ", themePill)
+	if rateLimitPill != "" {
+		items = append(items, " ", rateLimitPill)
+	}
+	left := lipgloss.JoinHorizontal(lipgloss.Top, items...)
+
+	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	bullet := lipgloss.NewStyle().Foreground(m.theme.Border).Render(" • ")
+	kb := func(k, d string) string { return keyStyle.Render(k) + " " + descStyle.Render(d) }
+
+	var helpItems []string
+	if width >= 120 {
+		helpItems = []string{kb("Tab", "tab"), kb("b", "branch"), kb("←/→", "pane"), kb("R", "readme"), kb("Esc", "back"), kb("?", "help"), kb("q", "quit")}
+	} else if width >= 80 {
+		helpItems = []string{kb("Tab", "tab"), kb("b", "branch"), kb("Esc", "back"), kb("?", "help"), kb("q", "quit")}
+	} else {
+		helpItems = []string{kb("Esc", "back"), kb("q", "quit")}
+	}
+	helpText := strings.Join(helpItems, bullet)
+
+	gap := width - lipgloss.Width(left) - lipgloss.Width(helpText)
+	if gap < 1 {
+		leftItems := []string{repoPill}
+		if toastPill != "" {
+			leftItems = append(leftItems, " ", toastPill)
+		}
+		left = lipgloss.JoinHorizontal(lipgloss.Top, leftItems...)
+		gap = width - lipgloss.Width(left) - lipgloss.Width(helpText)
+	}
+	if gap < 1 {
+		left = repoPill
+		gap = max(1, width-lipgloss.Width(left)-lipgloss.Width(helpText))
+	}
+
+	bar := lipgloss.JoinHorizontal(lipgloss.Center, left, strings.Repeat(" ", gap), helpText)
+	return lipgloss.NewStyle().
+		Width(width).
+		Height(1).
+		MaxHeight(1).
+		Background(m.theme.Background).
+		Render(bar)
+}
