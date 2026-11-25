@@ -64,8 +64,12 @@ func (s *SessionCache) GetBytes(key string) ([]byte, bool) {
 // SetBytes stores a defensive copy of val under key with the given TTL.
 // If ttl <= 0, the cache's defaultTTL is used.
 func (s *SessionCache) SetBytes(key string, val []byte, ttl time.Duration) {
+	if s == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.inflight, key)
 	s.setEntryLocked(key, sessionEntry{
 		key:      key,
 		bytes:    cloneBytes(val),
@@ -97,8 +101,12 @@ func (s *SessionCache) GetValue(key string) (any, bool) {
 // SetValue stores an arbitrary value under key with the given TTL.
 // If ttl <= 0, the cache's defaultTTL is used.
 func (s *SessionCache) SetValue(key string, val any, ttl time.Duration) {
+	if s == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.inflight, key)
 	s.setEntryLocked(key, sessionEntry{
 		key:    key,
 		val:    val,

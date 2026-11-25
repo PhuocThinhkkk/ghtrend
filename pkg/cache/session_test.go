@@ -235,6 +235,7 @@ func TestSessionCache_GetOrFetchBytes_DeduplicationAndNonBlocking(t *testing.T) 
 	}
 
 	<-started
+	waitForInflightWaiters(t, sc, "trending:go:daily", workers)
 
 	// Cache mutex must NOT be held across fn I/O: unrelated keys must be accessible immediately.
 	doneOther := make(chan struct{})
@@ -285,6 +286,25 @@ func TestSessionCache_GetOrFetchBytes_DeduplicationAndNonBlocking(t *testing.T) 
 	if calls.Load() != 1 {
 		t.Fatalf("expected no additional fn call on cache hit, got %d", calls.Load())
 	}
+}
+
+func waitForInflightWaiters(t *testing.T, sc *SessionCache, key string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		sc.mu.Lock()
+		call := sc.inflight[key]
+		waiters := 0
+		if call != nil {
+			waiters = call.waiters
+		}
+		sc.mu.Unlock()
+		if waiters >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d inflight waiters on key %q", want, key)
 }
 
 func TestSessionCache_GetOrFetchBytes_ErrorsPanicsAndContext(t *testing.T) {
@@ -361,8 +381,7 @@ func TestSessionCache_GetOrFetchBytes_ErrorsPanicsAndContext(t *testing.T) {
 		})
 	}()
 
-	// Give second caller a moment to join inflight call before cancelling first caller.
-	time.Sleep(15 * time.Millisecond)
+	waitForInflightWaiters(t, sc, "shared-cancel", 2)
 	cancel1()
 	time.Sleep(15 * time.Millisecond)
 	close(fnRelease)
@@ -430,6 +449,38 @@ func TestSessionCache_InvalidateDuringInflightPreventsStaleStore(t *testing.T) {
 
 	if _, ok := sc.GetBytes("k"); ok {
 		t.Fatalf("expected invalidated in-flight result not to be stored in cache")
+	}
+}
+
+func TestSessionCache_ExplicitWriteDuringInflightIsNotOverwritten(t *testing.T) {
+	sc := NewSessionCache(8, time.Minute)
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	var wg sync.WaitGroup
+	var fetchRes []byte
+	var fetchErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fetchRes, _, fetchErr = sc.GetOrFetchBytes(context.Background(), "k-write", 0, func(ctx context.Context) ([]byte, error) {
+			close(started)
+			<-release
+			return []byte("older-fetch"), nil
+		})
+	}()
+
+	<-started
+	sc.SetBytes("k-write", []byte("newer-explicit"), time.Minute)
+	close(release)
+	wg.Wait()
+
+	if fetchErr != nil || !bytes.Equal(fetchRes, []byte("older-fetch")) {
+		t.Fatalf("expected waiter to receive fetch result, got (%q, %v)", fetchRes, fetchErr)
+	}
+	got, ok := sc.GetBytes("k-write")
+	if !ok || !bytes.Equal(got, []byte("newer-explicit")) {
+		t.Fatalf("expected explicit SetBytes value preserved, got (%q, %v)", got, ok)
 	}
 }
 

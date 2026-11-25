@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/PhuocThinhkkk/ghtrend/pkg/ghclient"
 )
 
-const cacheTTLSeconds = int64(time.Hour / time.Second)
+const (
+	cacheTTLSeconds   = int64(time.Hour / time.Second)
+	maxCacheFileBytes = 32 << 20 // 32 MiB
+)
 
 var diskCacheMu sync.Mutex
 
@@ -68,31 +72,88 @@ func SaveCache(repos []ghclient.Repo, path string, cfg *flags.CmdConfig) error {
 		allCache = append(allCache, newCache)
 	}
 
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	encoded, err := encodeCacheWithinLimit(allCache, cfg)
 	if err != nil {
 		return err
 	}
+
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp cache file: %w", err)
+	}
 	tmpPath := tmpFile.Name()
 
-	encodeErr := json.NewEncoder(tmpFile).Encode(allCache)
+	_, writeErr := tmpFile.Write(encoded)
 	closeErr := tmpFile.Close()
-	if encodeErr != nil {
+	if writeErr != nil {
 		_ = os.Remove(tmpPath)
-		return encodeErr
+		return fmt.Errorf("write temp cache file: %w", writeErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmpPath)
-		return closeErr
+		return fmt.Errorf("close temp cache file: %w", closeErr)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(path)
-		if renameErr := os.Rename(tmpPath, path); renameErr != nil {
-			_ = os.Remove(tmpPath)
-			return renameErr
+		bakPath := path + ".bak"
+		_ = os.Remove(bakPath)
+		if renameBakErr := os.Rename(path, bakPath); renameBakErr == nil {
+			if renameErr := os.Rename(tmpPath, path); renameErr != nil {
+				_ = os.Rename(bakPath, path)
+				_ = os.Remove(tmpPath)
+				return fmt.Errorf("replace cache file %q: %w", path, renameErr)
+			}
+			_ = os.Remove(bakPath)
+			return nil
 		}
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace cache file %q: %w", path, err)
 	}
 	return nil
+}
+
+func encodeCacheWithinLimit(allCache []CacheData, currentCfg *flags.CmdConfig) ([]byte, error) {
+	encoded, err := json.Marshal(allCache)
+	if err != nil {
+		return nil, fmt.Errorf("encode cache data: %w", err)
+	}
+	if len(encoded) <= maxCacheFileBytes {
+		return append(encoded, '\n'), nil
+	}
+
+	// Evict oldest non-current entries until within maxCacheFileBytes.
+	var others []CacheData
+	var current *CacheData
+	for i := range allCache {
+		if current == nil && cacheKeyMatches(allCache[i], currentCfg) {
+			entry := allCache[i]
+			current = &entry
+			continue
+		}
+		others = append(others, allCache[i])
+	}
+
+	sort.Slice(others, func(i, j int) bool {
+		return others[i].Timestamp > others[j].Timestamp
+	})
+
+	for len(others) > 0 {
+		others = others[:len(others)-1]
+		candidate := make([]CacheData, 0, len(others)+1)
+		if current != nil {
+			candidate = append(candidate, *current)
+		}
+		candidate = append(candidate, others...)
+		encoded, err = json.Marshal(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("encode trimmed cache data: %w", err)
+		}
+		if len(encoded) <= maxCacheFileBytes {
+			return append(encoded, '\n'), nil
+		}
+	}
+
+	return nil, fmt.Errorf("cache entry exceeds max allowed file size of %d bytes", maxCacheFileBytes)
 }
 
 func LoadCache(path string, cfg *flags.CmdConfig) ([]ghclient.Repo, error) {
@@ -136,13 +197,16 @@ func readAllCache(path string) ([]CacheData, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("open existing cache %q: %w", path, err)
 	}
 	defer f.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(f, 32<<20))
+	raw, err := io.ReadAll(io.LimitReader(f, maxCacheFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read existing cache %q: %w", path, err)
+	}
+	if len(raw) > maxCacheFileBytes {
+		return nil, fmt.Errorf("existing cache %q exceeded max allowed size of %d bytes", path, maxCacheFileBytes)
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, nil
@@ -158,13 +222,21 @@ func readAllCache(path string) ([]CacheData, error) {
 func findCacheEntry(path string, cfg *flags.CmdConfig) (CacheData, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return CacheData{}, err
+		return CacheData{}, fmt.Errorf("open cache %q: %w", path, err)
 	}
 	defer f.Close()
 
+	raw, err := io.ReadAll(io.LimitReader(f, maxCacheFileBytes+1))
+	if err != nil {
+		return CacheData{}, fmt.Errorf("read cache %q: %w", path, err)
+	}
+	if len(raw) > maxCacheFileBytes {
+		return CacheData{}, fmt.Errorf("cache %q exceeded max allowed size of %d bytes", path, maxCacheFileBytes)
+	}
+
 	var allCache []CacheData
-	if err := json.NewDecoder(f).Decode(&allCache); err != nil {
-		return CacheData{}, err
+	if err := json.Unmarshal(raw, &allCache); err != nil {
+		return CacheData{}, fmt.Errorf("decode cache %q: %w", path, err)
 	}
 
 	for _, c := range allCache {

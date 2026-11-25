@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -359,4 +360,26 @@ func TestCache_ConcurrentDiskAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestCache_RejectsOversizedSingleEntryAndPreservesExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "size_guard.json")
+
+	smallCfg := &flags.CmdConfig{Since: flags.Daily, Language: "Go", Limit: 5}
+	if err := SaveCache([]ghclient.Repo{{Name: "keep-me", Owner: "org"}}, cachePath, smallCfg); err != nil {
+		t.Fatalf("initial SaveCache failed: %v", err)
+	}
+
+	hugeCfg := &flags.CmdConfig{Since: flags.Weekly, Language: "Go", Limit: 5}
+	hugeReadme := strings.Repeat("A", maxCacheFileBytes+1024)
+	if err := SaveCache([]ghclient.Repo{{Name: "huge", Owner: "org", ReadMe: hugeReadme}}, cachePath, hugeCfg); err == nil {
+		t.Fatalf("expected SaveCache to reject entry exceeding maxCacheFileBytes")
+	}
+
+	// Existing usable cache must remain intact.
+	loaded, err := LoadCache(cachePath, smallCfg)
+	if err != nil || len(loaded) != 1 || loaded[0].Name != "keep-me" {
+		t.Fatalf("expected existing cache preserved, got (%+v, %v)", loaded, err)
+	}
 }
