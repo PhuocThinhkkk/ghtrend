@@ -51,6 +51,7 @@ type LaunchOptions struct {
 	FetchDirectRepo func(owner, repo string) ([]Repo, error)
 	HistoryStore    *cache.HistoryStore
 	Workspace       *WorkspaceService
+	Search          *SearchService
 }
 
 type activeComponent int8
@@ -103,6 +104,7 @@ type Model struct {
 	launchOpts          LaunchOptions
 	home                homeModel
 	workspace           workspaceModel
+	searchModal         searchModalState
 	activeTargetID      string
 	launchSeq           uint64
 	historyReqSeq       uint64
@@ -671,6 +673,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.refreshWorkspaceViewerContent()
 					m.refreshPRDetailContent()
 					m.refreshIssueDetailContent()
+					if m.workspace.commitDiffOpen {
+						m.refreshCommitDiffViewport()
+					}
 				}
 				_ = appconfig.SaveConfig(appconfig.Config{Theme: selected.ID})
 				return m, nil
@@ -707,6 +712,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.searchModal.open {
+			return m, m.updateGlobalSearchModal(msg)
+		}
+
 		if m.state == stateHome && m.home.isInputActive() {
 			return m, m.updateHome(msg)
 		}
@@ -741,6 +750,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		case "/":
+			if m.state == stateDashboard || m.state == stateHome || m.state == stateWorkspace {
+				return m, m.openGlobalSearchModal()
+			}
+		case "F", "ctrl+f":
 			if m.state == stateDashboard {
 				m.filtering = true
 				m.filterInput.Focus()
@@ -883,6 +896,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.searchModal.open {
+			modalW := min(84, max(44, msg.Width-8))
+			m.searchModal.input.Width = max(20, modalW-18)
+		}
 		if m.state == stateDashboard {
 			m.recalculateLayout(msg.Width, msg.Height)
 		} else if m.state == stateWorkspace {
@@ -1115,9 +1132,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
+		if gsMsg, ok := msg.(globalSearchDebounceMsg); ok {
+			if m.searchModal.open && gsMsg.seq == m.searchModal.seq &&
+				(gsMsg.debounceID == 0 || m.searchModal.debouncer.Matches(gsMsg.debounceID)) &&
+				gsMsg.query == strings.TrimSpace(m.searchModal.input.Value()) {
+				return m, executeGlobalSearchCmd(m.activeSearchService(), gsMsg.seq, gsMsg.mode, gsMsg.query)
+			}
+			return m, nil
+		}
+		if gsRes, ok := msg.(globalSearchResultsMsg); ok {
+			if !m.searchModal.open || gsRes.seq != m.searchModal.seq {
+				return m, nil
+			}
+			m.searchModal.loading = false
+			m.searchModal.err = gsRes.err
+			if gsRes.err == nil {
+				if gsRes.mode == searchModeUsers {
+					m.searchModal.users = gsRes.users
+				} else {
+					m.searchModal.repos = gsRes.repos
+				}
+				m.clampSearchModalCursor()
+			}
+			return m, nil
+		}
 		if wsCmd, handled := m.handleWorkspaceMsg(msg); handled {
 			return m, wsCmd
 		}
+	}
+
+	if m.searchModal.open {
+		var smCmd tea.Cmd
+		m.searchModal.input, smCmd = m.searchModal.input.Update(msg)
+		return m, smCmd
 	}
 
 	if m.state == stateHome && m.home.isInputActive() {
@@ -1345,6 +1392,10 @@ func (m Model) View() string {
 
 	if m.showHelpModal {
 		return m.renderHelpModal(width, height)
+	}
+
+	if m.searchModal.open {
+		return m.renderGlobalSearchModal(width, height)
 	}
 
 	switch m.state {
@@ -1660,7 +1711,8 @@ func (m Model) renderStatusBar(width int) string {
 		helpItems = []string{
 			kb("Tab", "cycle"),
 			kb("1-3", "focus"),
-			kb("/", "filter"),
+			kb("F", "filter"),
+			kb("/", "search"),
 			kb("o", "open"),
 			kb("H", "home"),
 			kb("y", "copy"),
@@ -1672,7 +1724,7 @@ func (m Model) renderStatusBar(width int) string {
 		helpItems = []string{
 			kb("Tab", "cycle"),
 			kb("1-3", "focus"),
-			kb("/", "filter"),
+			kb("F", "filter"),
 			kb("H", "home"),
 			kb("t", "theme"),
 			kb("?", "help"),
@@ -1900,8 +1952,9 @@ func (m Model) renderHelpModal(width, height int) string {
 				formatRow("f / [/]", "Cycle PR/Issue state / Page prev/next"),
 				formatRow("c / Ctrl+S", "Add comment / Submit comment"),
 				formatRow("X", "Close or reopen selected Issue"),
+				formatRow("s / Y / C", "Star / Copy git clone / Clone repo"),
 				formatRow("O / y", "Open in browser / Copy URL"),
-				formatRow("H / ~", "Return to Home Launcher"),
+				formatRow("/ / H", "Global search / Home Launcher"),
 				formatRow("t / ? / q", "Theme / Help / Quit"),
 			)
 		} else {
@@ -1909,8 +1962,9 @@ func (m Model) renderHelpModal(width, height int) string {
 				formatRow("Tab / 1-4", "Switch tabs"),
 				formatRow("↑/↓ / Enter", "Navigate / Open item"),
 				formatRow("f / c / X", "Filter / Comment / Close Issue"),
+				formatRow("s / Y / C", "Star / Copy clone / Clone"),
 				formatRow("← / R / b", "Tree / README / Branch"),
-				formatRow("O / y / Esc", "Browser / Copy / Back"),
+				formatRow("/ / O / Esc", "Search / Browser / Back"),
 				formatRow("t / ? / q", "Theme / Help / Quit"),
 			)
 		}
@@ -1925,7 +1979,8 @@ func (m Model) renderHelpModal(width, height int) string {
 			formatRow("H / ~", "Return to Home Launcher"),
 			"",
 			sectionStyle.Render("TRENDING & ACTIONS"),
-			formatRow("/", "Interactive in-place filter"),
+			formatRow("F / Ctrl+F", "Interactive in-place filter"),
+			formatRow("/", "Global GitHub search modal"),
 			formatRow("d / f", "Cycle Daily ⇄ Weekly ⇄ Monthly"),
 			formatRow("O", "Open repository in browser"),
 			formatRow("y", "Copy repository URL"),
@@ -1942,7 +1997,7 @@ func (m Model) renderHelpModal(width, height int) string {
 			formatRow("Tab / 1-3", "Cycle or jump panes"),
 			formatRow("↑/↓ / Enter", "Navigate / Open Workspace"),
 			formatRow("H / ~", "Home Launcher"),
-			formatRow("/", "Fuzzy search filter"),
+			formatRow("F / /", "Local filter / Global search"),
 			formatRow("d / f", "Cycle Daily/Weekly/Monthly"),
 			formatRow("O / y", "Open browser / Copy URL"),
 			formatRow("a / t", "Avatar / Theme selector"),

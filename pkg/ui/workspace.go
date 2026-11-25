@@ -45,6 +45,11 @@ type WorkspaceService struct {
 	FetchIssueTimeline func(ctx context.Context, owner, repo string, number int) ([]ghclient.TimelineComment, error)
 	CreateComment      func(ctx context.Context, owner, repo string, number int, body string) (ghclient.TimelineComment, error)
 	UpdateIssueState   func(ctx context.Context, owner, repo string, number int, state string) (ghclient.Issue, error)
+	FetchCommits       func(ctx context.Context, owner, repo, ref string, page int) ([]ghclient.CommitSummary, bool, error)
+	FetchCommitDiff    func(ctx context.Context, owner, repo, sha string) (ghclient.CommitDiff, error)
+	IsStarred          func(ctx context.Context, owner, repo string) (bool, error)
+	SetStarred         func(ctx context.Context, owner, repo string, star bool) error
+	CloneRepo          func(ctx context.Context, owner, repo, parentDir string) (string, error)
 }
 
 func defaultWorkspaceService() WorkspaceService {
@@ -61,6 +66,11 @@ func defaultWorkspaceService() WorkspaceService {
 		FetchIssueTimeline: ghclient.FetchIssueTimeline,
 		CreateComment:      ghclient.CreateIssueComment,
 		UpdateIssueState:   ghclient.UpdateIssueState,
+		FetchCommits:       ghclient.FetchRepoCommits,
+		FetchCommitDiff:    ghclient.FetchCommitDiff,
+		IsStarred:          ghclient.IsRepoStarred,
+		SetStarred:         ghclient.SetRepoStarred,
+		CloneRepo:          utils.CloneRepository,
 	}
 }
 
@@ -103,6 +113,21 @@ func (m Model) activeWorkspaceService() WorkspaceService {
 		}
 		if svc.UpdateIssueState == nil {
 			svc.UpdateIssueState = def.UpdateIssueState
+		}
+		if svc.FetchCommits == nil {
+			svc.FetchCommits = def.FetchCommits
+		}
+		if svc.FetchCommitDiff == nil {
+			svc.FetchCommitDiff = def.FetchCommitDiff
+		}
+		if svc.IsStarred == nil {
+			svc.IsStarred = def.IsStarred
+		}
+		if svc.SetStarred == nil {
+			svc.SetStarred = def.SetStarred
+		}
+		if svc.CloneRepo == nil {
+			svc.CloneRepo = def.CloneRepo
 		}
 		return svc
 	}
@@ -201,6 +226,31 @@ type workspaceModel struct {
 	commentInput        textarea.Model
 	commentSubmitting   bool
 	commentErr          error
+
+	commitSeq          uint64
+	commits            []ghclient.CommitSummary
+	commitsLoaded      bool
+	commitsLoading     bool
+	commitsErr         error
+	commitPage         int
+	commitHasNext      bool
+	commitCursor       int
+	commitOffset       int
+	commitDiffSeq      uint64
+	commitDiffOpen     bool
+	commitDiffLoading  bool
+	commitDiffErr      error
+	commitDiff         ghclient.CommitDiff
+	commitDiffFocus    workspaceCodeFocus
+	commitFileCursor   int
+	commitFileOffset   int
+	commitDiffViewport viewport.Model
+
+	starSeq      uint64
+	starLoaded   bool
+	starred      bool
+	starUpdating bool
+	cloning      bool
 }
 
 type wsMetadataLoadedMsg struct {
@@ -263,9 +313,11 @@ type wsFileLoadedMsg struct {
 }
 
 func (m *Model) openWorkspace(owner, repo, breadcrumb string, prev appState) tea.Cmd {
+	m.launchSeq++
 	m.cursorDebouncer.Cancel()
 	seq := m.workspace.seq + 1
 	refSeq := m.workspace.refSeq + 1
+	starSeq := m.workspace.starSeq + 1
 
 	bf := textinput.New()
 	bf.Placeholder = "filter branches or tags..."
@@ -277,28 +329,32 @@ func (m *Model) openWorkspace(owner, repo, breadcrumb string, prev appState) tea
 	vp.SetContent("_Loading repository README..._")
 	prVP := viewport.New(60, 16)
 	issueVP := viewport.New(60, 16)
+	commitVP := viewport.New(60, 16)
 
 	m.workspace = workspaceModel{
-		seq:           seq,
-		refSeq:        refSeq,
-		owner:         owner,
-		repo:          repo,
-		activeRef:     "",
-		breadcrumb:    breadcrumb,
-		prevState:     prev,
-		tab:           wsTabCode,
-		codeFocus:     wsFocusTree,
-		branchFilter:  bf,
-		expanded:      make(map[string]bool),
-		dirChildren:   make(map[string][]ghclient.TreeEntry),
-		viewer:        vp,
-		viewerTitle:   "README",
-		prFilter:      "open",
-		prPage:        1,
-		prViewport:    prVP,
-		issueFilter:   "open",
-		issuePage:     1,
-		issueViewport: issueVP,
+		seq:                seq,
+		refSeq:             refSeq,
+		owner:              owner,
+		repo:               repo,
+		activeRef:          "",
+		breadcrumb:         breadcrumb,
+		prevState:          prev,
+		tab:                wsTabCode,
+		codeFocus:          wsFocusTree,
+		branchFilter:       bf,
+		expanded:           make(map[string]bool),
+		dirChildren:        make(map[string][]ghclient.TreeEntry),
+		viewer:             vp,
+		viewerTitle:        "README",
+		prFilter:           "open",
+		prPage:             1,
+		prViewport:         prVP,
+		issueFilter:        "open",
+		issuePage:          1,
+		issueViewport:      issueVP,
+		commitPage:         1,
+		commitDiffViewport: commitVP,
+		starSeq:            starSeq,
 	}
 
 	m.state = stateWorkspace
@@ -312,6 +368,7 @@ func (m *Model) openWorkspace(owner, repo, breadcrumb string, prev appState) tea
 		wsFetchRefsCmd(svc, seq, owner, repo),
 		wsFetchTreeCmd(svc, seq, refSeq, owner, repo, "HEAD"),
 		wsFetchREADMECmd(svc, seq, refSeq, owner, repo, ""),
+		wsFetchStarStatusCmd(svc, seq, starSeq, owner, repo),
 	)
 }
 
@@ -401,14 +458,28 @@ func (m *Model) switchWorkspaceRef(newRef string) tea.Cmd {
 	m.workspace.viewer.SetContent("_Loading README for " + newRef + "..._")
 
 	m.workspace.refSeq++
+	m.workspace.commits = nil
+	m.workspace.commitsLoaded = false
+	m.workspace.commitsLoading = false
+	m.workspace.commitsErr = nil
+	m.workspace.commitPage = 1
+	m.workspace.commitCursor = 0
+	m.workspace.commitOffset = 0
+	m.workspace.commitDiffSeq++
+	m.workspace.commitDiffOpen = false
+
 	svc := m.activeWorkspaceService()
 	seq := m.workspace.seq
 	refSeq := m.workspace.refSeq
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		wsFetchTreeCmd(svc, seq, refSeq, m.workspace.owner, m.workspace.repo, newRef),
 		wsFetchREADMECmd(svc, seq, refSeq, m.workspace.owner, m.workspace.repo, newRef),
 		m.setTransientToast("🌿 Switched to "+newRef, 2*time.Second),
-	)
+	}
+	if m.workspace.tab == wsTabCommits {
+		cmds = append(cmds, m.ensureWorkspaceCommitsLoaded())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) handleWorkspaceMsg(msg tea.Msg) (tea.Cmd, bool) {
@@ -622,6 +693,65 @@ func (m *Model) handleWorkspaceMsg(msg tea.Msg) (tea.Cmd, bool) {
 			m.refreshIssueDetailContent()
 		}
 		return m.setTransientToast(fmt.Sprintf("Issue #%d marked %s", msg.number, msg.issue.State), 2*time.Second), true
+	case wsCommitsLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.refSeq != m.workspace.refSeq || msg.reqSeq != m.workspace.commitSeq {
+			return nil, true
+		}
+		m.workspace.commitsLoading = false
+		m.workspace.commitsLoaded = true
+		m.workspace.commitsErr = msg.err
+		if msg.err == nil {
+			m.workspace.commits = msg.commits
+			m.workspace.commitPage = msg.page
+			m.workspace.commitHasNext = msg.hasNext
+			m.workspace.clampCommitCursor(m.workspaceListVisibleRows())
+		}
+		return nil, true
+	case wsCommitDiffLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.reqSeq != m.workspace.commitDiffSeq {
+			return nil, true
+		}
+		m.workspace.commitDiffLoading = false
+		m.workspace.commitDiffErr = msg.err
+		if msg.err == nil {
+			m.workspace.commitDiff = msg.diff
+			m.workspace.commitFileCursor = 0
+			m.workspace.commitFileOffset = 0
+		}
+		m.refreshCommitDiffViewport()
+		return nil, true
+	case wsStarStatusLoadedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.starSeq != m.workspace.starSeq {
+			return nil, true
+		}
+		if msg.err == nil {
+			m.workspace.starLoaded = true
+			m.workspace.starred = msg.starred
+		}
+		return nil, true
+	case wsStarToggledMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq || msg.starSeq != m.workspace.starSeq {
+			return nil, true
+		}
+		m.workspace.starUpdating = false
+		if msg.err != nil {
+			return m.setTransientToast("⚠ Star action failed: "+msg.err.Error(), 3*time.Second), true
+		}
+		m.workspace.starLoaded = true
+		m.workspace.starred = msg.starred
+		if msg.starred {
+			return m.setTransientToast("★ Starred "+m.workspace.owner+"/"+m.workspace.repo, 2*time.Second), true
+		}
+		return m.setTransientToast("☆ Unstarred "+m.workspace.owner+"/"+m.workspace.repo, 2*time.Second), true
+	case wsCloneCompletedMsg:
+		if m.state != stateWorkspace || msg.seq != m.workspace.seq {
+			return nil, true
+		}
+		m.workspace.cloning = false
+		if msg.err != nil {
+			return m.setTransientToast("⚠ Clone failed: "+msg.err.Error(), 3*time.Second), true
+		}
+		return m.setTransientToast("✅ Cloned to "+msg.targetPath, 3*time.Second), true
 	}
 	return nil, false
 }
@@ -685,6 +815,9 @@ func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
 		if m.workspace.tab == wsTabIssues && m.workspace.issueDetail != nil {
 			return m.updateWorkspaceIssues(msg)
 		}
+		if m.workspace.tab == wsTabCommits && m.workspace.commitDiffOpen {
+			return m.updateWorkspaceCommits(msg)
+		}
 		m.workspace.seq++
 		prev := m.workspace.prevState
 		if prev == stateLoading || prev == stateError || prev == stateWorkspace {
@@ -716,7 +849,29 @@ func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
 		return m.ensureWorkspaceIssuesLoaded()
 	case "4":
 		m.workspace.tab = wsTabCommits
-		return nil
+		return m.ensureWorkspaceCommitsLoaded()
+
+	case "s":
+		if m.workspace.starUpdating {
+			return nil
+		}
+		m.workspace.starUpdating = true
+		m.workspace.starSeq++
+		target := !m.workspace.starred
+		return wsToggleStarCmd(m.activeWorkspaceService(), m.workspace.seq, m.workspace.starSeq, m.workspace.owner, m.workspace.repo, target)
+
+	case "Y":
+		return m.copyWorkspaceCloneCommand()
+
+	case "C":
+		if m.workspace.cloning {
+			return nil
+		}
+		m.workspace.cloning = true
+		return tea.Batch(
+			wsCloneRepoCmd(m.activeWorkspaceService(), m.workspace.seq, m.workspace.owner, m.workspace.repo),
+			m.setTransientToast("⏳ Cloning "+m.workspace.owner+"/"+m.workspace.repo+"...", 4*time.Second),
+		)
 
 	case "b":
 		m.workspace.showBranchModal = true
@@ -759,6 +914,8 @@ func (m *Model) updateWorkspace(msg tea.KeyMsg) tea.Cmd {
 		return m.updateWorkspacePRs(msg)
 	case wsTabIssues:
 		return m.updateWorkspaceIssues(msg)
+	case wsTabCommits:
+		return m.updateWorkspaceCommits(msg)
 	}
 	return nil
 }
@@ -769,6 +926,8 @@ func (m *Model) ensureActiveWorkspaceTabLoaded() tea.Cmd {
 		return m.ensureWorkspacePRsLoaded()
 	case wsTabIssues:
 		return m.ensureWorkspaceIssuesLoaded()
+	case wsTabCommits:
+		return m.ensureWorkspaceCommitsLoaded()
 	}
 	return nil
 }
@@ -837,11 +996,16 @@ func (m *Model) recalculateWorkspaceLayout(width, height int) {
 		viewerW := width - treeW
 		m.workspace.viewer.Width = max(20, viewerW-4)
 		m.workspace.viewer.Height = max(1, availH-2)
+		diffFilesW := max(26, min(44, width*32/100))
+		m.workspace.commitDiffViewport.Width = max(20, (width-diffFilesW)-4)
+		m.workspace.commitDiffViewport.Height = max(1, availH-2)
 	} else {
 		treeH := max(5, availH*40/100)
 		viewerH := max(4, availH-treeH)
 		m.workspace.viewer.Width = max(20, width-4)
 		m.workspace.viewer.Height = max(1, viewerH-2)
+		m.workspace.commitDiffViewport.Width = max(20, width-4)
+		m.workspace.commitDiffViewport.Height = max(1, viewerH-2)
 	}
 	m.workspace.prViewport.Width = max(20, width-4)
 	m.workspace.prViewport.Height = max(1, availH-2)
@@ -853,6 +1017,9 @@ func (m *Model) recalculateWorkspaceLayout(width, height int) {
 	if m.workspace.issueDetail != nil {
 		m.refreshIssueDetailContent()
 	}
+	if m.workspace.commitDiffOpen {
+		m.refreshCommitDiffViewport()
+	}
 	if m.workspace.showCommentModal {
 		m.workspace.commentInput.SetWidth(max(36, min(76, width-12)))
 		m.workspace.commentInput.SetHeight(max(5, min(10, height-12)))
@@ -860,6 +1027,8 @@ func (m *Model) recalculateWorkspaceLayout(width, height int) {
 	m.workspace.clampTreeCursor(m.workspaceTreeVisibleRows())
 	m.workspace.clampPRCursor(m.workspaceListVisibleRows())
 	m.workspace.clampIssueCursor(m.workspaceListVisibleRows())
+	m.workspace.clampCommitCursor(m.workspaceListVisibleRows())
+	m.workspace.clampCommitFileCursor(m.workspaceTreeVisibleRows())
 }
 
 func (m Model) renderWorkspaceView(width, height int) string {
@@ -883,7 +1052,7 @@ func (m Model) renderWorkspaceView(width, height int) string {
 	case wsTabIssues:
 		body = m.renderWorkspaceIssuesTab(width, availH)
 	case wsTabCommits:
-		body = m.renderWorkspacePlaceholderTab(width, availH, "4: Commits", "Commits history & color-coded unified Diff viewer will arrive in PR #5.")
+		body = m.renderWorkspaceCommitsTab(width, availH)
 	}
 
 	statusBar := m.renderWorkspaceStatusBar(width)
