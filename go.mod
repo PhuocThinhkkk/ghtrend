@@ -15,7 +15,7 @@ require (
 	github.com/forPelevin/gomoji v1.4.1
 	github.com/lpernett/godotenv v0.0.0-20230527005122-0de1d4c5ef5e
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/image v0.20.0
+	golang.org/x/image v0.41.0
 )
 
 require (
